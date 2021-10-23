@@ -42,7 +42,7 @@ proc print_rows {rows} {
             set justify [lindex $col_sizes $i]
             incr justify -[string length $col_data]
 
-            puts -nonewline " | [string repeat { } $justify] $col_data"
+            puts -nonewline "| $col_data [string repeat { } $justify] "
             incr i
         }
 

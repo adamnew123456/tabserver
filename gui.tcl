@@ -28,14 +28,14 @@ proc build_ui {} {
 
         set result_label ".h.history.frame.$OUTPUT_COUNTER"
         tk::label $result_label -font TkFixedFont -text $sql -relief groove -borderwidth 2
-        pack $result_label
+        pack $result_label -anchor w -expand 1 -fill x
 
         incr OUTPUT_COUNTER
 
         if {$was_error} {
             set error_label ".h.history.frame.$OUTPUT_COUNTER"
             tk::label $error_label -font TkHeadingFont -text $result -relief groove -borderwidth 2
-            pack $error_label
+            pack $error_label -anchor w -expand 1 -fill x
         } else {
             set result_grid ".h.history.frame.$OUTPUT_COUNTER"
 
@@ -60,7 +60,7 @@ proc build_ui {} {
             }
 
 
-            pack $result_grid
+            pack $result_grid -anchor w
         }
 
         incr OUTPUT_COUNTER

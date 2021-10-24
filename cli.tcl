@@ -48,31 +48,8 @@ proc print_rows {rows} {
 
         puts "|"
     }
-}
 
-proc print_table {metadata rows} {
-    set col_names {}
-    set col_types {}
-
-    foreach {name type} $metadata {
-        lappend col_names $name
-        lappend col_types $type
-    }
-
-    print_rows [concat [list $col_names $col_types] $rows]
-    puts "~~ Rows: [llength $rows] ~~"
-}
-
-proc print_metadata {metadata} {
-    set col_names {}
-    set col_types {}
-
-    foreach {name type} $metadata {
-        lappend col_names $name
-        lappend col_types $type
-    }
-
-    print_rows [list $col_names $col_types]
+    puts "~~ Rows: [expr {[llength $rows]} - 2] ~~"
 }
 
 if {$argc == 0 || $argc > 2} {
@@ -160,8 +137,8 @@ while {!$done} {
     if $execute {
         if $prepare {
             set failed [catch {
-                set metadata [tabquery_prepare $conn $query]
-                print_metadata $metadata
+                set rows [tabquery_prepare $conn $query]
+                print_rows $rows
             } err]
 
             if $failed {
@@ -171,11 +148,8 @@ while {!$done} {
             set prepare 0
         } else {
             set failed [catch {
-                set output [tabquery_execute $conn $query]
-                set metadata [lindex $output 0]
-                set rows [lrange $output 1 end]
-
-                print_table $metadata $rows
+                set rows [tabquery_execute $conn $query]
+                print_rows $rows
             } err]
 
             if $failed {

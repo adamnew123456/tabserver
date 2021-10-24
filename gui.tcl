@@ -23,7 +23,6 @@ proc build_ui {} {
         global CONN
         global OUTPUT_COUNTER
         set sql [.sql get]
-        puts "EXECUTE: $sql"
 
         set was_error [catch {tabquery_execute $CONN $sql} result]
 
@@ -52,9 +51,9 @@ proc build_ui {} {
                         set font TkFixedFont
                     }
 
-                    ttk::label $cell -font $font -text "$col |"
+                    ttk::label $cell -font $font -text "| $col" -anchor w
 
-                    grid $cell -row $rownum -column $colnum -sticky e
+                    grid $cell -row $rownum -column $colnum -sticky w
                     incr colnum
                 }
                 incr rownum
@@ -72,35 +71,34 @@ proc build_ui {} {
         global CONN
         global OUTPUT_COUNTER
         set sql [.sql get]
-        puts "PREPARE: $sql"
 
         set was_error [catch {tabquery_prepare $CONN $sql} result]
 
         set result_label ".h.history.frame.$OUTPUT_COUNTER"
-        tk::label $result_label -font TkFixedFont -text $sql
+        tk::label $result_label -font TkFixedFont -text $sql -relief groove -borderwidth 2
         pack $result_label
 
         incr OUTPUT_COUNTER
 
         if {$was_error} {
             set error_label ".h.history.frame.$OUTPUT_COUNTER"
-            tk::label $error_label -font TkFixedFont -text $result
+            tk::label $error_label -font TkFixedFont -text $result -relief groove -borderwidth 2
             pack $error_label
         } else {
             set result_grid ".h.history.frame.$OUTPUT_COUNTER"
 
-            set row 0
-            tk::frame $result_grid
+            set rownum 0
+            tk::frame $result_grid -relief groove -borderwidth 2
             foreach row $result {
-                set col 0
+                set colnum 0
                 foreach col $row {
-                    set cell "$result_grid.${row}_${col}"
-                    ttk;:label $cell -font TkHeadingFont -text $col
+                    set cell "$result_grid.${rownum}_${colnum}"
+                    ttk::label $cell -font TkHeadingFont -text "| $col" -anchor w
 
-                    grid $cell -row $row -column $col
-                    incr col
+                    grid $cell -row $rownum -column $colnum -sticky w
+                    incr colnum
                 }
-                incr row
+                incr rownum
             }
 
 
@@ -113,7 +111,6 @@ proc build_ui {} {
 
     tk::button .clear -text Clear -command {
         global OUTPUT_COUNTER
-        puts "CLEAR: $sql"
 
         while {$OUTPUT_COUNTER > 0} {
             incr OUTPUT_COUNTER -1

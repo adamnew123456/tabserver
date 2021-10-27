@@ -69,8 +69,13 @@ proc tabquery_connect {server port} {
         }
 
         proc execute {query} {
+            variable conn
             variable state
             variable output
+
+            if {[string equal $state DEAD]} {
+                error "Connection was lost"
+            }
 
             set state [list AWAIT_ACK AWAIT_EXECUTE $query]
             send_raw EXECUTE
@@ -78,9 +83,13 @@ proc tabquery_connect {server port} {
         }
 
         proc prepare {query} {
+            variable conn
             variable state
-            variable pending_query
             variable output
+
+            if {[string equal $state DEAD]} {
+                error "Connection was lost"
+            }
 
             set state [list AWAIT_ACK AWAIT_PREPARE $query]
             send_raw PREPARE
@@ -88,11 +97,15 @@ proc tabquery_connect {server port} {
         }
 
         proc on_read {} {
+            variable conn
             variable state
             variable output
 
             switch [lindex $state 0] {
-                IDLE {error "Unexpected data received in IDLE state. This is likely a bug."}
+                IDLE {
+                    set state DEAD
+                    close $conn
+                }
 
                 AWAIT_ACK {
                     set reply [recv_raw]
@@ -245,8 +258,8 @@ proc tabquery_connect {server port} {
 }
 
 proc tabquery_close {conn} {
-    close $conn
-    namespace delete ::tabserver::client_$conn
+    catch {close $conn}
+    catch {namespace delete ::tabserver::client_$conn}
 }
 
 proc tabquery_prepare {conn query} {

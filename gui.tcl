@@ -2,135 +2,153 @@ package require Tk
 
 source core.tcl
 
-proc connect {server port} {
+global SERVER
+global PORT
+
+proc connect {} {
+    global SERVER
+    global PORT
     global CONN
-    set CONN [tabquery_connect $server $port]
+    set CONN [tabquery_connect $SERVER $PORT]
 }
 
 set OUTPUT_COUNTER 0
 
+proc text_label {name text tag args} {
+    set lines 0
+    set maxlength 0
+    foreach line [split $text "\n"] {
+        set len [string length $line]
+        if {$len > $maxlength} {
+            set maxlength $len
+        }
+        incr lines
+    }
+
+    tk::text $name {*}$args
+    $name insert 1.0 $text $tag
+    $name configure -state disabled -width $maxlength -height $lines
+}
+
+proc add_query_label {query} {
+    global OUTPUT_COUNTER
+    set result_label ".canvas.history.frame.$OUTPUT_COUNTER"
+    incr OUTPUT_COUNTER
+
+    text_label $result_label $query message
+    $result_label tag configure message -justify left -wrap word
+    pack $result_label -fill x
+}
+
+proc add_error_label {result} {
+    global OUTPUT_COUNTER
+    set error_label ".canvas.history.frame.$OUTPUT_COUNTER"
+    incr OUTPUT_COUNTER
+
+    text_label $error_label $result message
+    $error_label tag configure message -justify left -wrap word -foreground red
+    pack $error_label -fill x
+}
+
+proc build_table {result} {
+    global OUTPUT_COUNTER
+    set result_grid ".canvas.history.frame.$OUTPUT_COUNTER"
+    incr OUTPUT_COUNTER
+
+    set rownum 0
+    tk::frame $result_grid -relief groove -borderwidth 2
+    foreach row $result {
+        set colnum 0
+        foreach col $row {
+            set cell "$result_grid.${rownum}_${colnum}"
+            text_label $cell $col data
+
+            if {$rownum < 2} {
+                $cell tag configure data -justify center -wrap char -underline true
+            } else {
+                $cell tag configure data -justify right -wrap char
+            }
+
+            grid $cell -row $rownum -column $colnum
+            incr colnum
+        }
+        incr rownum
+    }
+
+
+    pack $result_grid -anchor w
+}
+
+proc query_action {action} {
+    global CONN
+    set sql [string trim [.sql get 1.0 end]]
+    set was_error [catch {$action $CONN $sql} result]
+    add_query_label $sql
+
+    if {$was_error} {
+        add_error_label $result
+    } else {
+        build_table $result
+    }
+
+    .canvas.history yview moveto 1
+}
+
 proc build_ui {} {
     global OUTPUT_COUNTER
 
-    ttk::frame .h
-    tk::canvas .h.history -xscrollcommand {.h.history_scrlx set} -yscrollcommand {.h.history_scrly set}
-    tk::frame .h.history.frame
-    tk::entry .sql
-    tk::scrollbar .h.history_scrlx -orient horizontal -command {.h.history xview}
-    tk::scrollbar .h.history_scrly -orient vertical -command {.h.history yview}
+    ttk::frame .canvas
+    tk::canvas .canvas.history -xscrollcommand {.canvas.history_scrlx set} -yscrollcommand {.canvas.history_scrly set}
+    tk::frame .canvas.history.frame
+    tk::text .sql -height 6
+    tk::scrollbar .canvas.history_scrlx -orient horizontal -command {.canvas.history xview}
+    tk::scrollbar .canvas.history_scrly -orient vertical -command {.canvas.history yview}
+    tk::frame .buttons
 
-    tk::button .execute -text Execute -command {
-        global CONN
-        global OUTPUT_COUNTER
-        set sql [.sql get]
-
-        set was_error [catch {tabquery_execute $CONN $sql} result]
-
-        set result_label ".h.history.frame.$OUTPUT_COUNTER"
-        tk::label $result_label -font TkFixedFont -text $sql -relief groove -borderwidth 2
-        pack $result_label -anchor w -expand 1 -fill x
-
-        incr OUTPUT_COUNTER
-
-        if {$was_error} {
-            set error_label ".h.history.frame.$OUTPUT_COUNTER"
-            tk::label $error_label -font TkHeadingFont -text $result -relief groove -borderwidth 2
-            pack $error_label -anchor w -expand 1 -fill x
-        } else {
-            set result_grid ".h.history.frame.$OUTPUT_COUNTER"
-
-            set rownum 0
-            tk::frame $result_grid -relief groove -borderwidth 2
-            foreach row $result {
-                set colnum 0
-                foreach col $row {
-                    set cell "$result_grid.${rownum}_${colnum}"
-                    if {$rownum < 2} {
-                        set font TkHeadingFont
-                    } else {
-                        set font TkFixedFont
-                    }
-
-                    ttk::label $cell -font $font -text "| $col" -anchor w
-
-                    grid $cell -row $rownum -column $colnum -sticky w
-                    incr colnum
-                }
-                incr rownum
-            }
-
-
-            pack $result_grid -anchor w
-        }
-
-        incr OUTPUT_COUNTER
-        .h.history yview moveto 1
+    tk::button .buttons.execute -text Execute -command {
+        query_action tabquery_execute
     }
 
-    tk::button .prepare -text Prepare -command {
-        global CONN
-        global OUTPUT_COUNTER
-        set sql [.sql get]
-
-        set was_error [catch {tabquery_prepare $CONN $sql} result]
-
-        set result_label ".h.history.frame.$OUTPUT_COUNTER"
-        tk::label $result_label -font TkFixedFont -text $sql -relief groove -borderwidth 2
-        pack $result_label
-
-        incr OUTPUT_COUNTER
-
-        if {$was_error} {
-            set error_label ".h.history.frame.$OUTPUT_COUNTER"
-            tk::label $error_label -font TkFixedFont -text $result -relief groove -borderwidth 2
-            pack $error_label
-        } else {
-            set result_grid ".h.history.frame.$OUTPUT_COUNTER"
-
-            set rownum 0
-            tk::frame $result_grid -relief groove -borderwidth 2
-            foreach row $result {
-                set colnum 0
-                foreach col $row {
-                    set cell "$result_grid.${rownum}_${colnum}"
-                    ttk::label $cell -font TkHeadingFont -text "| $col" -anchor w
-
-                    grid $cell -row $rownum -column $colnum -sticky w
-                    incr colnum
-                }
-                incr rownum
-            }
-
-
-            pack $result_grid
-        }
-
-        incr OUTPUT_COUNTER
-        .h.history yview moveto 1
+    tk::button .buttons.prepare -text Prepare -command {
+        query_action tabquery_prepare
     }
 
-    tk::button .clear -text Clear -command {
+    tk::button .buttons.clear -text Clear -command {
         global OUTPUT_COUNTER
-
         while {$OUTPUT_COUNTER > 0} {
             incr OUTPUT_COUNTER -1
-            destroy .h.history.frame.$OUTPUT_COUNTER
+            destroy .canvas.history.frame.$OUTPUT_COUNTER
         }
+
+        .canvas.history yview moveto 0
     }
 
-    bind .h.history.frame "<Configure>" {
-        .h.history configure -scrollregion [list %x %y %w %h]
+    tk::button .buttons.reconnect -text Reconnect -command {
+        global CONN
+        add_query_label "<Reconnect requested>"
+        tabquery_close $CONN
+        connect
     }
 
-    .h.history create window 0 0 -anchor nw -window .h.history.frame
+    bind .canvas.history.frame "<Configure>" {
+        .canvas.history configure -scrollregion [list %x %y %w %h]
+    }
 
-    pack .h.history_scrly -side right -fill y
-    pack .h.history -fill both -expand 1
-    pack .h.history_scrlx -side bottom -fill x
-    pack .h -fill both -expand 1
-    pack .clear -side bottom -fill x
-    pack .prepare -side bottom -fill x
-    pack .execute -side bottom -fill x
+    bind .canvas.history "<Configure>" {
+        .canvas.history itemconfigure .canvas.history.frame -width %w
+    }
+
+    .canvas.history create window 0 0 -anchor nw -window .canvas.history.frame
+
+    pack .canvas.history_scrly -side right -fill y
+    pack .canvas.history -fill both -expand 1
+    pack .canvas.history_scrlx -side bottom -fill x
+    pack .canvas -fill both -expand 1
+    pack .buttons.reconnect -side right -expand 1 -fill x
+    pack .buttons.clear -side right -expand 1 -fill x
+    pack .buttons.prepare -side right -expand 1 -fill x
+    pack .buttons.execute -side right -expand 1 -fill x
+    pack .buttons -fill x -side bottom
     pack .sql -side bottom -fill x
 }
 
@@ -140,10 +158,13 @@ if {$argc == 0 || $argc > 2} {
 }
 
 if {$argc == 2} {
-    connect [lindex $argv 0] [lindex $argv 1]
+    set SERVER [lindex $argv 0]
+    set PORT [lindex $argv 1]
 } else {
-    set server [lindex $argv 0]
-    connect [lindex $argv 0] 3306
+    set SERVER [lindex $argv 0]
+    set PORT 3306
 }
+
+connect
 
 build_ui

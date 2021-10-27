@@ -122,6 +122,11 @@ proc tabquery_connect {server port} {
                             set output [list error "Server did not accept command: [recv_data]"]
                         }
 
+                        {} {
+                            set state DEAD
+                            set output [list error "Connection was lost"]
+                        }
+
                         default {
                             set state IDLE
                             set output [list error "Protocol error: unexpected EXECUTE response '$reply'"]
@@ -140,6 +145,11 @@ proc tabquery_connect {server port} {
                             set output [list error "Server could not execute query: [recv_data]"]
                         }
 
+                        {} {
+                            set state DEAD
+                            set output [list error "Connection was lost"]
+                        }
+
                         default {
                             set state IDLE
                             set output [list error "Protocol error: unexpected EXECUTE response '$reply'"]
@@ -155,6 +165,11 @@ proc tabquery_connect {server port} {
                         ERROR {
                             set state IDLE
                             set output [list error "Server could not prepare query: [recv_data]"]
+                        }
+
+                        {} {
+                            set state DEAD
+                            set output [list error "Connection was lost"]
                         }
 
                         default {
@@ -222,6 +237,11 @@ proc tabquery_connect {server port} {
                         ERROR {
                             set state IDLE
                             set output [list error "Server could not read rows: [recv_data]"]
+                        }
+
+                        {} {
+                            set state DEAD
+                            set output [list error "Connection was lost"]
                         }
 
                         default {

@@ -5,6 +5,14 @@ source core.tcl
 global SERVER
 global PORT
 
+proc max {a b} {
+    if {$a > $b} {
+        return $a
+    } else {
+        return $b
+    }
+}
+
 proc connect {} {
     global SERVER
     global PORT
@@ -55,27 +63,46 @@ proc build_table {result} {
     set result_grid ".canvas.history.frame.$OUTPUT_COUNTER"
     incr OUTPUT_COUNTER
 
-    set rownum 0
-    tk::frame $result_grid -relief groove -borderwidth 2
+    set buffer {}
+    if {[llength $result] == 0} {
+        text_label $result_grid "<empty>" data
+        pack $result_grid -anchor w
+        return
+    }
+
+    set col_sizes {}
+    set col_count [llength [lindex $result 0]]
+    while {$col_count >= 0} {
+        lappend col_sizes 0
+        incr col_count -1
+    }
+
     foreach row $result {
-        set colnum 0
-        foreach col $row {
-            set cell "$result_grid.${rownum}_${colnum}"
-            text_label $cell $col data
-
-            if {$rownum < 2} {
-                $cell tag configure data -justify center -wrap char -underline true
-            } else {
-                $cell tag configure data -justify right -wrap char
-            }
-
-            grid $cell -row $rownum -column $colnum
-            incr colnum
+        set col_count [llength $row]
+        while {$col_count > 0} {
+            incr col_count -1
+            set col_data [lindex $row $col_count]
+            lset col_sizes $col_count [max [lindex $col_sizes $col_count] [string length $col_data]]
         }
-        incr rownum
+    }
+
+    foreach row $result {
+        set i 0
+        set col_count [llength $row]
+        while {$i < $col_count} {
+            set col_data [lindex $row $i]
+            set justify [lindex $col_sizes $i]
+            incr justify -[string length $col_data]
+
+            set buffer "$buffer | $col_data [string repeat { } $justify] "
+            incr i
+        }
+
+        set buffer "$buffer|\n"
     }
 
 
+    text_label $result_grid $buffer data
     pack $result_grid -anchor w
 }
 
@@ -91,7 +118,10 @@ proc query_action {action} {
         build_table $result
     }
 
-    .canvas.history yview moveto 1
+    # Only run this after the canvas rescales itself for the new widgets
+    after idle {
+        .canvas.history yview moveto 1
+    }
 }
 
 proc build_ui {} {
@@ -120,7 +150,12 @@ proc build_ui {} {
             destroy .canvas.history.frame.$OUTPUT_COUNTER
         }
 
-        .canvas.history yview moveto 0
+        # Let the canvas rescale itself for the size of the frame
+        after idle {
+            .canvas.history configure -scrollregion {0 0 0 0}
+            .canvas.history xview moveto 0
+            .canvas.history yview moveto 0
+        }
     }
 
     tk::button .buttons.reconnect -text Reconnect -command {

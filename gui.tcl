@@ -2,204 +2,175 @@ package require Tk
 
 source core.tcl
 
-global SERVER
-global PORT
+array set query_metadata {}
+array set query_rows {}
 
 proc max {a b} {
-    if {$a > $b} {
-        return $a
-    } else {
-        return $b
-    }
+    if {$a > $b} {return $a} else {return $b}
 }
 
-proc connect {} {
-    global SERVER
-    global PORT
-    global CONN
-    set CONN [tabquery_connect $SERVER $PORT]
-}
+proc query_callback {event id {value ""}} {
+    global query_metadata query_rows
 
-set OUTPUT_COUNTER 0
+    switch $event {
+        new_client {
+            ttk::frame .tabs.$id
+            .tabs add .tabs.$id -text "$value ($id)"
 
-proc text_label {name text tag args} {
-    set lines 0
-    set maxlength 0
-    foreach line [split $text "\n"] {
-        set len [string length $line]
-        if {$len > $maxlength} {
-            set maxlength $len
+            tk::text .tabs.$id.log -state disabled
+            pack .tabs.$id.log -fill both -expand 1
+
+            tk::text .tabs.$id.query -height 6
+            pack .tabs.$id.query -fill x
+
+            ttk::frame .tabs.$id.actions
+            tk::button .tabs.$id.actions.execute -text Execute -command "send_query $id tabquery_execute"
+            tk::button .tabs.$id.actions.prepare -text Prepare -command "send_query $id tabquery_prepare"
+            tk::button .tabs.$id.actions.clear -text Clear -command "clear_log $id"
+            tk::button .tabs.$id.actions.kill -text Kill -command "tabquery_kill_connection $id 1"
+
+            pack .tabs.$id.actions.execute -side left -fill both -expand 1
+            pack .tabs.$id.actions.prepare -side left -fill both -expand 1
+            pack .tabs.$id.actions.clear -side left -fill both -expand 1
+            pack .tabs.$id.actions.kill -side left -fill both -expand 1
+            pack .tabs.$id.actions -fill x
+
+            ttk::frame .tabs.$id.cursor
+            tk::button .tabs.$id.cursor.next -text Next -command "tabquery_resolve_page $id 1"
+            tk::button .tabs.$id.cursor.abort -text Abort -command "tabquery_resolve_page $id 0"
+
+            pack .tabs.$id.cursor.next -side left -fill both -expand 1
+            pack .tabs.$id.cursor.abort -side left -fill both -expand 1
         }
-        incr lines
-    }
 
-    tk::text $name {*}$args
-    $name insert 1.0 $text $tag
-    $name configure -state disabled -width $maxlength -height $lines
-}
+        drop_client {
+            pack forget .tabs.$id.query
+            pack forget .tabs.$id.actions
+            pack forget .tabs.$id.cursor
+            write_alert $id "Connection closed"
+        }
 
-proc add_query_label {query} {
-    global OUTPUT_COUNTER
-    set result_label ".canvas.history.frame.$OUTPUT_COUNTER"
-    incr OUTPUT_COUNTER
+        metadata {
+            set query_metadata($id) $value
+        }
 
-    text_label $result_label $query message
-    $result_label tag configure message -justify left -wrap word
-    pack $result_label -fill x
-}
+        data {
+            lappend query_rows($id) $value
+        }
 
-proc add_error_label {result} {
-    global OUTPUT_COUNTER
-    set error_label ".canvas.history.frame.$OUTPUT_COUNTER"
-    incr OUTPUT_COUNTER
+        page {
+            render_table $id
 
-    text_label $error_label $result message
-    $error_label tag configure message -justify left -wrap word -foreground red
-    pack $error_label -fill x
-}
+            set query_rows($id) {}
+            .tabs.$id.log configure -state normal
+            .tabs.$id.log insert end "------ NEXT PAGE ------\n"
+            .tabs.$id.log configure -state disabled
 
-proc build_table {result} {
-    global OUTPUT_COUNTER
-    set result_grid ".canvas.history.frame.$OUTPUT_COUNTER"
-    incr OUTPUT_COUNTER
+            pack .tabs.$id.cursor -fill x
+        }
 
-    set buffer {}
-    if {[llength $result] == 0} {
-        text_label $result_grid "<empty>" data
-        pack $result_grid -anchor w
-        return
-    }
+        page_confirm {
+            pack forget .tabs.$id.cursor
+        }
 
-    set col_sizes {}
-    set col_count [llength [lindex $result 0]]
-    while {$col_count >= 0} {
-        lappend col_sizes 0
-        incr col_count -1
-    }
+        done {
+            render_table $id
+            .tabs.$id.query configure -state normal
+        }
 
-    foreach row $result {
-        set col_count [llength $row]
-        while {$col_count > 0} {
-            incr col_count -1
-            set col_data [lindex $row $col_count]
-            lset col_sizes $col_count [max [lindex $col_sizes $col_count] [string length $col_data]]
+        error {
+            write_alert $id $value
+            .tabs.$id.query configure -state normal
         }
     }
+}
 
-    foreach row $result {
+proc clear_log {id} {
+    .tabs.$id.log configure -state normal
+    .tabs.$id.log delete 1.0 end
+    .tabs.$id.log configure -state disabled
+}
+
+proc write_alert {id message} {
+    .tabs.$id.log configure -state normal
+    .tabs.$id.log insert end "\n\nAlert: $message\n\n"
+    .tabs.$id.log configure -state disabled
+}
+
+proc send_query {id command} {
+    global query_metadata query_rows
+    set query_metadata($id) {}
+    set query_rows($id) {}
+
+    set sql [string trim [.tabs.$id.query get 1.0 end]]
+
+    .tabs.$id.log configure -state normal
+    .tabs.$id.log insert end "\n\nSQL:\n$sql\n\n"
+    .tabs.$id.log configure -state disabled
+
+    $command $id $sql
+    .tabs.$id.query configure -state disabled
+}
+
+proc render_table {id} {
+    global query_metadata query_rows
+
+    set rows {}
+    set maxlength {}
+
+    set row {}
+    foreach field $query_metadata($id) {
+        set column [lindex $field 0]
+        lappend row $column
+        lappend maxlength [string length $column]
+    }
+    lappend rows $row
+
+    set i 0
+    set row {}
+    foreach field $query_metadata($id) {
+        set type [lindex $field 1]
+        lappend row $type
+        lset maxlength $i [max [lindex $maxlength $i] [string length $type]]
+        incr i
+    }
+    lappend rows $row
+
+    foreach row $query_rows($id) {
+        lappend rows $row
+
         set i 0
-        set col_count [llength $row]
-        while {$i < $col_count} {
-            set col_data [lindex $row $i]
-            set justify [lindex $col_sizes $i]
-            incr justify -[string length $col_data]
+        foreach cell $row {
+            lset maxlength $i [max [lindex $maxlength $i] [string length $cell]]
+            incr i
+        }
+    }
 
-            set buffer "$buffer | $col_data [string repeat { } $justify] "
+    .tabs.$id.log configure -state normal
+
+    foreach row $rows {
+        set i 0
+        foreach cell $row {
+            set justify [lindex $maxlength $i]
+            .tabs.$id.log insert end [format "| %${justify}s " $cell]
             incr i
         }
 
-        set buffer "$buffer|\n"
+        .tabs.$id.log insert end "|\n"
     }
 
-
-    text_label $result_grid $buffer data
-    pack $result_grid -anchor w
+    .tabs.$id.log configure -state disabled
 }
 
-proc query_action {action} {
-    global CONN
-    set sql [string trim [.sql get 1.0 end]]
-    set was_error [catch {$action $CONN $sql} result]
-    add_query_label $sql
-
-    if {$was_error} {
-        add_error_label $result
-    } else {
-        build_table $result
-    }
-
-    # Only run this after the canvas rescales itself for the new widgets
-    after idle {
-        .canvas.history yview moveto 1
-    }
+proc build_root_ui {} {
+    ttk::notebook .tabs
+    pack .tabs -fill both -expand 1
 }
 
-proc build_ui {} {
-    global OUTPUT_COUNTER
-
-    ttk::frame .canvas
-    tk::canvas .canvas.history -xscrollcommand {.canvas.history_scrlx set} -yscrollcommand {.canvas.history_scrly set}
-    tk::frame .canvas.history.frame
-    tk::text .sql -height 6
-    tk::scrollbar .canvas.history_scrlx -orient horizontal -command {.canvas.history xview}
-    tk::scrollbar .canvas.history_scrly -orient vertical -command {.canvas.history yview}
-    tk::frame .buttons
-
-    tk::button .buttons.execute -text Execute -command {
-        query_action tabquery_execute
-    }
-
-    tk::button .buttons.prepare -text Prepare -command {
-        query_action tabquery_prepare
-    }
-
-    tk::button .buttons.clear -text Clear -command {
-        global OUTPUT_COUNTER
-        while {$OUTPUT_COUNTER > 0} {
-            incr OUTPUT_COUNTER -1
-            destroy .canvas.history.frame.$OUTPUT_COUNTER
-        }
-
-        # Let the canvas rescale itself for the size of the frame
-        after idle {
-            .canvas.history configure -scrollregion {0 0 0 0}
-            .canvas.history xview moveto 0
-            .canvas.history yview moveto 0
-        }
-    }
-
-    tk::button .buttons.reconnect -text Reconnect -command {
-        global CONN
-        add_query_label "<Reconnect requested>"
-        tabquery_close $CONN
-        connect
-    }
-
-    bind .canvas.history.frame "<Configure>" {
-        .canvas.history configure -scrollregion [list %x %y %w %h]
-    }
-
-    bind .canvas.history "<Configure>" {
-        .canvas.history itemconfigure .canvas.history.frame -width %w
-    }
-
-    .canvas.history create window 0 0 -anchor nw -window .canvas.history.frame
-
-    pack .canvas.history_scrly -side right -fill y
-    pack .canvas.history -fill both -expand 1
-    pack .canvas.history_scrlx -side bottom -fill x
-    pack .canvas -fill both -expand 1
-    pack .buttons.reconnect -side right -expand 1 -fill x
-    pack .buttons.clear -side right -expand 1 -fill x
-    pack .buttons.prepare -side right -expand 1 -fill x
-    pack .buttons.execute -side right -expand 1 -fill x
-    pack .buttons -fill x -side bottom
-    pack .sql -side bottom -fill x
-}
-
-if {$argc == 0 || $argc > 2} {
-    puts "$argv0 SERVER \[PORT\]"
+if {$argc != 1} {
+    puts "$argv0 PORT"
     exit 1
 }
 
-if {$argc == 2} {
-    set SERVER [lindex $argv 0]
-    set PORT [lindex $argv 1]
-} else {
-    set SERVER [lindex $argv 0]
-    set PORT 3306
-}
-
-connect
-
-build_ui
+tabquery_bind [lindex $argv 0] query_callback
+build_root_ui

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Usage: sqlite-server PORT
+Usage: sqlite-server HOST PORT
 """
 
 import base64
@@ -9,36 +9,50 @@ import sqlite3
 import sys
 
 
-def send_data(peer_file, data):
-    print(base64.b64encode(data).decode('ascii'), file=peer_file)
+def send_data(server_file, data):
+    print(base64.b64encode(data).decode('ascii'), file=server_file)
 
-def recv_data(peer_file):
-    blob = next(peer_file)
+def recv_data(server_file):
+    blob = next(server_file)
     return base64.b64decode(blob).decode('utf-8')
 
 
-def execute_query(peer_recv, peer_send, cursor):
-    peer_send.flush()
-    query = recv_data(peer_recv)
+def execute_query(server_recv, server_send, cursor):
+    server_send.flush()
+    query = recv_data(server_recv)
     try:
         cursor.execute(query)
     except sqlite3.Error as err:
-        print('ERROR', file=peer_send)
-        send_data(peer_send, (str(err) or 'Unknown error').encode('utf-8'))
+        print('ERROR', file=server_send)
+        send_data(server_send, (str(err) or 'Unknown error').encode('utf-8'))
         return
 
     rowcount = cursor.rowcount
     metadata = cursor.description
 
     if metadata is not None:
-        print('METADATA', file=peer_send)
-        print(len(metadata), file=peer_send)
+        print('METADATA', file=server_send)
+        print(len(metadata), file=server_send)
         for col in metadata:
-            send_data(peer_send, col[0].encode('utf-8'))
-            send_data(peer_send, str(col[1] or 'DYNAMIC').encode('utf-8'))
+            send_data(server_send, col[0].encode('utf-8'))
+            send_data(server_send, str(col[1] or 'DYNAMIC').encode('utf-8'))
 
+        page_row = 0
         for row in cursor:
-            print('ROW', file=peer_send)
+            if page_row == 3:
+                print('PAGE', file=server_send)
+                server_send.flush()
+
+                command = next(server_recv).strip()
+                if command == 'MORE':
+                    page_row = 0
+                elif command == 'ABORT':
+                    break
+                else:
+                    raise ValueError('Expected MORE or ABORT in response to PAGE')
+
+            page_row += 1
+            print('ROW', file=server_send)
             for col in row:
                 col_bytes = col
                 if col is None:
@@ -52,70 +66,76 @@ def execute_query(peer_recv, peer_send, cursor):
                     # up the other end's terminal
                     col_bytes = base64.b64encode(col).encode('utf-8')
 
-                send_data(peer_send, col_bytes)
+                send_data(server_send, col_bytes)
 
-        print('END', file=peer_send)
+        print('END', file=server_send)
 
     else:
-        print('AFFECTED', file=peer_send)
-        print(rowcount, file=peer_send)
+        print('AFFECTED', file=server_send)
+        print(rowcount, file=server_send)
 
 
-def prepare_query(peer_recv, peer_send, cursor):
-    peer_send.flush()
-    metadata_query = recv_data(peer_recv)
+def prepare_query(server_recv, server_send, cursor):
+    server_send.flush()
+    metadata_query = recv_data(server_recv)
     query = 'SELECT * FROM (' + metadata_query + ') LIMIT 0'
     try:
         cursor.execute(query)
     except sqlite3.Error as err:
-        print('ERROR', file=peer_send)
-        send_data(peer_send, (str(err) or 'Unknown error').encode('utf-8'))
+        print('ERROR', file=server_send)
+        send_data(server_send, (str(err) or 'Unknown error').encode('utf-8'))
         return
 
-    print('METADATA', file=peer_send)
-    print(len(cursor.description), file=peer_send)
+    print('METADATA', file=server_send)
+    print(len(cursor.description), file=server_send)
     for col in cursor.description:
-        send_data(peer_send, col[0].encode('utf-8'))
-        send_data(peer_send, str(col[1] or 'DYNAMIC').encode('utf-8'))
+        send_data(server_send, col[0].encode('utf-8'))
+        send_data(server_send, str(col[1] or 'DYNAMIC').encode('utf-8'))
 
 
-def main(port):
+def main(host, port):
     db = sqlite3.connect('db', isolation_level=None)
     cursor = db.cursor()
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(('', port))
-    server.listen(1)
-    (peer, peer_info) = server.accept()
-    peer_recv = peer.makefile(buffering=1, encoding='ascii', newline='\n')
-    peer_send = peer.makefile(mode='w', buffering=1, encoding='ascii', newline='\n')
+    server.connect((host, port))
+    server_recv = server.makefile(buffering=1, encoding='ascii', newline='\n')
+    server_send = server.makefile(mode='w', buffering=1, encoding='ascii', newline='\n')
+
+    print('HELLO', file=server_send)
+    send_data(server_send, b'sqlite')
+
     while True:
-        peer_send.flush()
+        server_send.flush()
 
         try:
-            command = next(peer_recv).strip()
+            command = next(server_recv).strip()
         except StopIteration:
             break
 
-        if command == 'EXECUTE':
-            print('OK', file=peer_send)
-            execute_query(peer_recv, peer_send, cursor)
-        elif command == 'PREPARE':
-            print('OK', file=peer_send)
-            prepare_query(peer_recv, peer_send, cursor)
-        else:
-            print('ERROR', file=peer_send)
-            send_data(peer_send, b'Illegal command')
+        try:
+            if command == 'EXECUTE':
+                execute_query(server_recv, server_send, cursor)
+            elif command == 'PREPARE':
+                prepare_query(server_recv, server_send, cursor)
+            else:
+                break
+        except Exception as err:
+            print('Error:', err)
+            break
 
+    server.close()
     db.close()
 
 
 if __name__ == '__main__':
+    host = None
     port = None
     try:
-        port = int(sys.argv[1])
+        host = sys.argv[1]
+        port = int(sys.argv[2])
     except (IndexError, ValueError):
         print(__doc__)
 
-    if port is not None:
-        main(port)
+    if host is not None and port is not None:
+        main(host, port)

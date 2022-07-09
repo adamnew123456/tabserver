@@ -9,13 +9,15 @@ using System.Text;
 public class TabServer
 {
     private DbConnection _cnx;
+    private int _host;
     private int _port;
 
     private StreamReader _peerRecv;
     private StreamWriter _peerSend;
 
-    public TabServer(int port, DbConnection cnx)
+    public TabServer(string host, int port, DbConnection cnx)
     {
+        _host = host;
         _port = port;
         _cnx = cnx;
     }
@@ -85,9 +87,24 @@ public class TabServer
                     }
 
                     // As above, we can only send an error after buffering the whole row
+                    int pageLeft = 5;
                     var dataLines = new string[columnCount];
                     while (reader.Read())
                     {
+                        if (pageLeft == 0)
+                        {
+                          WriteRaw("PAGE");
+                          string response = ReadRaw();
+                          if (response == "MORE")
+                          {
+                            pageLeft = 5;
+                          }
+                          else if (response == "ABORT")
+                          {
+                            break;
+                          }
+                        }
+
                         for (var i = 0; i < columnCount; i++)
                         {
                             if (reader.IsDBNull(i))
@@ -167,36 +184,36 @@ public class TabServer
 
     public void Start()
     {
-        using (var server = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.IP))
+        using (var peer = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.IP))
         {
-            server.Bind(new IPEndPoint(IPAddress.Any, _port));
-            server.Listen(1);
-            using (var peer = server.Accept())
+            peer.Connect(_host, _port);
+            var stream = new NetworkStream(peer, FileAccess.ReadWrite);
+            _peerRecv = new StreamReader(stream);
+            _peerSend = new StreamWriter(stream);
+
+            WriteRaw("HELLO");
+            WriteData(_cnx.DataSource);
+            _peerSend.Flush();
+
+            while (true)
             {
-                var stream = new NetworkStream(peer, FileAccess.ReadWrite);
-                _peerRecv = new StreamReader(stream);
-                _peerSend = new StreamWriter(stream);
+                var command = ReadRaw();
+                if (command == null) return;
 
-                while (true)
+                switch (command)
                 {
-                    var command = ReadRaw();
-                    if (command == null) return;
-
-                    switch (command)
-                    {
-                        case "EXECUTE":
-                            WriteRaw("OK");
-                            ExecuteQuery();
-                            break;
-                        case "PREPARE":
-                            WriteRaw("OK");
-                            PrepareQuery();
-                            break;
-                        default:
-                            WriteRaw("ERROR");
-                            WriteData("Invalid command");
-                            break;
-                    }
+                    case "EXECUTE":
+                        WriteRaw("OK");
+                        ExecuteQuery();
+                        break;
+                    case "PREPARE":
+                        WriteRaw("OK");
+                        PrepareQuery();
+                        break;
+                    default:
+                        WriteRaw("ERROR");
+                        WriteData("Invalid command");
+                        break;
                 }
             }
         }

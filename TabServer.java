@@ -8,13 +8,31 @@ import java.util.NoSuchElementException;
 import java.util.Scanner;
 
 public class TabServer {
+  private String _host;
   private int _port;
   private Connection _cnx;
 
   private Scanner _peerRecv;
   private BufferedWriter _peerSend;
 
-  public TabServer(int port, Connection cnx) {
+  public static void main(String[] args) throws Exception {
+    if (args.length != 4) {
+      System.out.println("TabServer DRIVER CONNECTION-STRING SERVER PORT");
+      return;
+    }
+
+    String driverName = args[0];
+    String connectionString = args[1];
+    String server = args[2];
+    int port = Integer.parseInt(args[3]);
+
+    Class.forName(driverName);
+    Connection cnx = DriverManager.getConnection(connectionString);
+    new TabServer(server, port, cnx).start();
+  }
+
+  public TabServer(String host, int port, Connection cnx) {
+    _host = host;
     _port = port;
     _cnx = cnx;
   }
@@ -41,105 +59,88 @@ public class TabServer {
     _peerSend.write('\n');
   }
 
+  private int sendMetadata(ResultSetMetaData metadata) throws IOException, SQLException {
+    String[] metadataLines = null;
+    int columnCount = 0;
+
+    // Metadata errors can only be reported up-front, so build the response first
+    columnCount = metadata.getColumnCount();
+    metadataLines = new String[2 * columnCount];
+    for (int i = 0; i < columnCount; i++) {
+      metadataLines[2*i] = metadata.getColumnLabel(i + 1);
+      metadataLines[2*i + 1] = metadata.getColumnTypeName(i + 1);
+    }
+
+    sendRaw("METADATA");
+    sendRaw("" + columnCount);
+    for (String line: metadataLines) {
+      sendData(line);
+    }
+
+    return columnCount;
+  }
+
   private void executeQuery() throws IOException {
     String query = readData();
 
     Statement stmt = null;
+    ResultSet rs = null;
+
     try {
       stmt = _cnx.createStatement();
-    } catch (SQLException err) {
-      sendRaw("ERROR");
-      sendData("Could not execute: " + err.getMessage());
-      return;
-    }
-
-    ResultSet rs = null;
-    int affected = 0;
-    try {
       stmt.execute(query);
+
       rs = stmt.getResultSet();
-      affected = stmt.getUpdateCount();
-    } catch (SQLException err) {
-      if (stmt != null) try { stmt.close(); } catch (SQLException ignore) { }
-      if (rs != null) try { rs.close(); } catch (SQLException ignore) { }
+      int affected = stmt.getUpdateCount();
 
-      sendRaw("ERROR");
-      sendData("Could not execute: " + err.getMessage());
-      return;
-    }
-
-    if (rs != null) {
-      String[] metadataLines = null;
-      int columnCount = 0;
-
-      try {
-        // Metadata errors can only be reported up-front, so build the response first
-        ResultSetMetaData metadata = rs.getMetaData();
-        columnCount = metadata.getColumnCount();
-        metadataLines = new String[2 * columnCount];
-        for (int i = 0; i < columnCount; i++) {
-          metadataLines[2*i] = metadata.getColumnLabel(i + 1);
-          metadataLines[2*i + 1] = metadata.getColumnTypeName(i + 1);
-        }
-      } catch (SQLException err) {
-        if (stmt != null) try { stmt.close(); } catch (SQLException ignore) { }
-        if (rs != null) try { rs.close(); } catch (SQLException ignore) { }
-
-        sendRaw("ERROR");
-        sendData("Could not build metadata: " + err.getMessage());
+      if (rs == null) {
+        sendRaw("AFFECTED");
+        sendRaw("" + affected);
         return;
       }
 
-      sendRaw("METADATA");
-      sendRaw("" + columnCount);
-      for (String line: metadataLines) {
-        sendData(line);
-      }
-
+      int columnCount = sendMetadata(rs.getMetaData());
       String[] rowdataLines = new String[columnCount];
 
-      try {
-        // Same as before, row errors can only be emitted on a per-row basis
-        while (rs.next()) {
-          try {
-            for (int i = 0; i < columnCount; i++) {
-              Object value = rs.getObject(i + 1);
-
-              if (value == null) {
-                rowdataLines[i] = "<null>";
-              } else if (value instanceof byte[]) {
-                rowdataLines[i] = Base64.getEncoder().encodeToString((byte[]) value);
-              } else {
-                rowdataLines[i] = value.toString();
-              }
-            }
-          } catch (SQLException err) {
-            if (stmt != null) try { stmt.close(); } catch (SQLException ignore) { }
-            if (rs != null) try { rs.close(); } catch (SQLException ignore) { }
-
-            sendRaw("ERROR");
-            sendData("Could not build row data: " + err.getMessage());
-            return;
-          }
-
-          sendRaw("ROW");
-          for (String line: rowdataLines) {
-            sendData(line);
+      int pageLeft = 5;
+      while (rs.next()) {
+        if (pageLeft == 0) {
+          sendRaw("PAGE");
+          String response = readRaw();
+          if (response.equals("MORE")) {
+            pageLeft = 5;
+          } else if (response.equals("ABORT")) {
+            break;
           }
         }
-      } catch (SQLException err) {
-        if (stmt != null) try { stmt.close(); } catch (SQLException ignore) { }
-        if (rs != null) try { rs.close(); } catch (SQLException ignore) { }
 
-        sendRaw("ERROR");
-        sendData("Could not build row data: " + err.getMessage());
-        return;
+        // Same as before, row errors can only be emitted on a per-row basis
+        pageLeft--;
+        for (int i = 0; i < columnCount; i++) {
+          Object value = rs.getObject(i + 1);
+
+          if (value == null) {
+            rowdataLines[i] = "<null>";
+          } else if (value instanceof byte[]) {
+            rowdataLines[i] = Base64.getEncoder().encodeToString((byte[]) value);
+          } else {
+            rowdataLines[i] = value.toString();
+          }
+        }
+
+        sendRaw("ROW");
+        for (String line: rowdataLines) {
+          sendData(line);
+        }
       }
 
       sendRaw("END");
-    } else {
-      sendRaw("AFFECTED");
-      sendRaw("" + affected);
+    } catch (SQLException err) {
+      sendRaw("ERROR");
+      sendData(err.getMessage());
+    } finally {
+      if (stmt != null) try { stmt.close(); } catch (SQLException ignore) { }
+      if (rs != null) try { rs.close(); } catch (SQLException ignore) { }
     }
   }
 
@@ -149,71 +150,46 @@ public class TabServer {
     PreparedStatement stmt = null;
     try {
       stmt = _cnx.prepareStatement(query);
+      sendMetadata(stmt.getMetaData());
     } catch (SQLException err) {
       sendRaw("ERROR");
       sendData("Could not prepare: " + err.getMessage());
-      return;
-    }
-
-    String[] metadataLines = null;
-    int columnCount = 0;
-
-    try {
-      // Metadata errors can only be reported up-front, so build the response first
-      ResultSetMetaData metadata = stmt.getMetaData();
-      columnCount = metadata.getColumnCount();
-      metadataLines = new String[2 * columnCount];
-      for (int i = 0; i < columnCount; i++) {
-        metadataLines[2*i] = metadata.getColumnLabel(i + 1);
-        metadataLines[2*i + 1] = metadata.getColumnTypeName(i + 1);
-      }
-    } catch (SQLException err) {
+    } finally {
       if (stmt != null) try { stmt.close(); } catch (SQLException ignore) { }
-
-      sendRaw("ERROR");
-      sendData("Could not build metadata: " + err.getMessage());
-      return;
-    }
-
-    sendRaw("METADATA");
-    sendRaw("" + columnCount);
-    for (String line: metadataLines) {
-      sendData(line);
     }
   }
 
-  public void start() throws IOException {
-    ServerSocket server = null;
+  public void start() throws IOException, SQLException {
     Socket peer = null;
     try {
-      server = new ServerSocket(_port, 1);
-      peer = server.accept();
-
+      peer = new Socket(_host, _port);
       _peerRecv = new Scanner(new InputStreamReader(peer.getInputStream(), StandardCharsets.US_ASCII));
       _peerSend = new BufferedWriter(new OutputStreamWriter(peer.getOutputStream(), StandardCharsets.US_ASCII));
+
+      DatabaseMetaData dbmd = _cnx.getMetaData();
+      String identity = dbmd.getDriverName() + " " + dbmd.getDriverVersion();
+      sendRaw("HELLO");
+      sendData(identity);
+      _peerSend.flush();
 
       while (true) {
         String command;
         try {
           command = readRaw();
+
+          if (command.equals("EXECUTE")) {
+            executeQuery();
+          } else if (command.equals("PREPARE")) {
+            prepareQuery();
+          } else {
+            break;
+          }
         } catch (NoSuchElementException err) {
           break;
-        }
-
-        if (command.equals("EXECUTE")) {
-          sendRaw("OK");
-          executeQuery();
-        } else if (command.equals("PREPARE")) {
-          sendRaw("OK");
-          prepareQuery();
-        } else {
-          sendRaw("ERROR");
-          sendData("Illegal command");
         }
       }
     } finally {
       if (peer != null) peer.close();
-      if (server != null) server.close();
     }
   }
 }

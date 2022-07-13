@@ -48,6 +48,9 @@ proc query_callback {event id {value ""}} {
             pack forget .tabs.$id.actions
             pack forget .tabs.$id.cursor
             write_alert $id "Connection closed"
+
+            tk::button .tabs.$id.close -text Close -command ".tabs forget current"
+            pack .tabs.$id.close -fill x
         }
 
         metadata {
@@ -66,11 +69,13 @@ proc query_callback {event id {value ""}} {
             .tabs.$id.log insert end "------ NEXT PAGE ------\n"
             .tabs.$id.log configure -state disabled
 
+            pack forget .tabs.$id.actions
             pack .tabs.$id.cursor -fill x
         }
 
         page_confirm {
             pack forget .tabs.$id.cursor
+            pack .tabs.$id.actions -fill x
         }
 
         done {

@@ -9,6 +9,16 @@ proc max {a b} {
     if {$a > $b} {return $a} else {return $b}
 }
 
+proc clean_cell {value} {
+    regsub -all {[\n\r]} $value "~" clean_value
+
+    if {[string length $clean_value] > 60} {
+        set clean_value "[string range $clean_value 0 57]..."
+    }
+
+    return $clean_value
+}
+
 proc query_callback {event id {value ""}} {
     global query_metadata query_rows
 
@@ -142,13 +152,18 @@ proc render_table {id} {
     lappend rows $row
 
     foreach row $query_rows($id) {
-        lappend rows $row
+        set clean_row {}
 
         set i 0
         foreach cell $row {
-            lset maxlength $i [max [lindex $maxlength $i] [string length $cell]]
+            set value [clean_cell $cell]
+            lappend clean_row $value
+
+            lset maxlength $i [max [lindex $maxlength $i] [string length $value]]
             incr i
         }
+
+        lappend rows $clean_row
     }
 
     .tabs.$id.log configure -state normal

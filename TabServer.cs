@@ -9,7 +9,7 @@ using System.Text;
 public class TabServer
 {
     private DbConnection _cnx;
-    private int _host;
+    private string _host;
     private int _port;
 
     private StreamReader _peerRecv;
@@ -87,7 +87,7 @@ public class TabServer
                     }
 
                     // As above, we can only send an error after buffering the whole row
-                    int pageLeft = 5;
+                    int pageLeft = 25;
                     var dataLines = new string[columnCount];
                     while (reader.Read())
                     {
@@ -97,7 +97,7 @@ public class TabServer
                           string response = ReadRaw();
                           if (response == "MORE")
                           {
-                            pageLeft = 5;
+                            pageLeft = 25;
                           }
                           else if (response == "ABORT")
                           {
@@ -192,10 +192,11 @@ public class TabServer
             _peerSend = new StreamWriter(stream);
 
             WriteRaw("HELLO");
-            WriteData(_cnx.DataSource);
+            WriteData(_cnx.DataSource == null ? "???" : _cnx.DataSource);
             _peerSend.Flush();
 
-            while (true)
+            var done = false;
+            while (!done)
             {
                 var command = ReadRaw();
                 if (command == null) return;
@@ -203,16 +204,12 @@ public class TabServer
                 switch (command)
                 {
                     case "EXECUTE":
-                        WriteRaw("OK");
                         ExecuteQuery();
                         break;
                     case "PREPARE":
-                        WriteRaw("OK");
                         PrepareQuery();
                         break;
                     default:
-                        WriteRaw("ERROR");
-                        WriteData("Invalid command");
                         break;
                 }
             }

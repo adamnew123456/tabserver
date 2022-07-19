@@ -102,13 +102,13 @@ public class TabServer {
       int columnCount = sendMetadata(rs.getMetaData());
       String[] rowdataLines = new String[columnCount];
 
-      int pageLeft = 5;
+      int pageLeft = 25;
       while (rs.next()) {
         if (pageLeft == 0) {
           sendRaw("PAGE");
           String response = readRaw();
           if (response.equals("MORE")) {
-            pageLeft = 5;
+            pageLeft = 25;
           } else if (response.equals("ABORT")) {
             break;
           }

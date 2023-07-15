@@ -391,3 +391,51 @@ END
 
 An `END` indicates that there is no more row data available and the client's
 resultset has been closed.
+
+## Broker Protocol
+
+### Overview
+
+Per the Topology section, the broker is designed to forward messages between
+clients (which are just normal tabserver clients) and a designated upstream
+server. Unlike a direct server, the upstream server has to manage all the
+connected clients through a single connection to the broker. The broker protocol
+is designed to encapsulate normal tabserver messages and add routing
+information.
+
+### Encoding
+
+For ease of use with browser-based clients, the broker's control protocol uses
+JSON passed over a websocket connection. It has only three types of messages.
+
+The first tells the upstream server that a particular client has connected. The
+broker identifies each client by a UUID, and the connection message sends that
+id along with whatever message the client provided in its `HELLO`:
+
+```json
+{
+  "id": "6eae2f2f-c2b2-49ee-ac3a-348299a13162",
+  "hello": "SQLite In-Memory Database"
+}
+```
+
+The second message tells the upstream server that a client has disconnected:
+
+```json
+{
+  "id": "6eae2f2f-c2b2-49ee-ac3a-348299a13162",
+  "goodbye": true
+}
+```
+
+Both of these types of messages can only be sent by the broker to the upstream
+server. The last message type can be sent by either the broker or the upstream
+server. Only one line of text (without the trailing `\n`) is permitted in the
+line field.
+
+```
+{
+  "id": "6eae2f2f-c2b2-49ee-ac3a-348299a13162",
+  "line": "EXECUTE"
+}
+```

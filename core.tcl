@@ -130,7 +130,7 @@ proc tabquery_read {id} {
                     }
 
                     eval $callback_cmd metadata $id [list $metadata_row]
-                    set connection_infos($id) [list $client AWAIT_ROW $metadata_count]
+                    set connection_infos($id) [list $client AWAIT_FIRST_ROW $metadata_count]
                 }
 
                 AFFECTED {
@@ -196,7 +196,11 @@ proc tabquery_read {id} {
             }
         }
 
+        AWAIT_FIRST_ROW -
         AWAIT_ROW {
+            set skip_page [expr {$state == "AWAIT_FIRST_ROW"}] 
+            set state AWAIT_ROW
+
             set reply [tabquery_recv_raw $client]
             set column_count [lindex $client_info 2]
 
@@ -211,11 +215,17 @@ proc tabquery_read {id} {
                 }
 
                 PAGE {
-                    set timeout [clock seconds]
-                    incr timeout 10
-                    set connection_infos($id) [list $client PROMPT_PAGE $column_count $timeout]
+                    if {$skip_page} {
+                        tabquery_send_raw $client MORE
+                        tabquery_send_raw $client 25
+                        set connection_infos($id) [list $client AWAIT_ROW $column_count]
+                    } else {
+                        set timeout [clock seconds]
+                        incr timeout 10
+                        set connection_infos($id) [list $client PROMPT_PAGE $column_count $timeout]
 
-                    eval $callback_cmd page $id
+                        eval $callback_cmd page $id
+                    }
                 }
 
                 ERROR {
@@ -287,6 +297,7 @@ proc tabquery_resolve_page {id keep_reading} {
     if $keep_reading {
         set columns [lindex $client_info 2]
         tabquery_send_raw $client MORE
+        tabquery_send_raw $client 25
         set connection_infos($id) [list $client AWAIT_ROW $columns]
     } else {
         tabquery_send_raw $client ABORT

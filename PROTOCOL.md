@@ -439,3 +439,26 @@ line field.
   "line": "EXECUTE"
 }
 ```
+
+### Connection Management
+
+The broker supports multiple concurrent clients but only one upstream server.
+The upstream server is mandatory:
+
+- If the upstream server has not connected yet, all client connections will be
+  refused.
+  
+- If the upstream server disconnects, all client connections are immediately
+  terminated.
+
+### Limitations
+
+To simplify the implementation of the broker, no message is  permitted where the
+size of the encoded JSON is greater than `0x7fffffff` (the max value of
+`int32`). If any client sends a message which exceeds that limit after being
+encapsulated, or the upstream server sends a message exceeding that limit, the
+connection that originated the message is automatically closed.
+
+The limitations under connection management apply here too. If a user sends a
+query that's longer than 2 GiB after base64 encoding, the broker kills the
+upstream server connection along with all connected clients.

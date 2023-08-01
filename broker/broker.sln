@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "broker", "broker\broker.csproj", "{4DD27948-8591-4A82-94F0-0B873148D707}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "brokerlib", "brokerlib\brokerlib.csproj", "{D41B82AC-463E-433B-83FF-8690D2F1E712}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "brokertest", "brokertest\brokertest.csproj", "{C2D90300-BDEA-4083-A795-76FB0BBF21FF}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4DD27948-8591-4A82-94F0-0B873148D707}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4DD27948-8591-4A82-94F0-0B873148D707}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4DD27948-8591-4A82-94F0-0B873148D707}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4DD27948-8591-4A82-94F0-0B873148D707}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D41B82AC-463E-433B-83FF-8690D2F1E712}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D41B82AC-463E-433B-83FF-8690D2F1E712}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D41B82AC-463E-433B-83FF-8690D2F1E712}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D41B82AC-463E-433B-83FF-8690D2F1E712}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2D90300-BDEA-4083-A795-76FB0BBF21FF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2D90300-BDEA-4083-A795-76FB0BBF21FF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2D90300-BDEA-4083-A795-76FB0BBF21FF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2D90300-BDEA-4083-A795-76FB0BBF21FF}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

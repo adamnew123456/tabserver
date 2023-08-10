@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.IO;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace brokerlib;
 
@@ -306,6 +305,9 @@ public class WebSocketServer : IManagedSocket, IDisposable
 	/// The frame used to build messages for sending upstream
 	private WebSocketFrame MessageFrame;
 
+	/// The encoder used to serialize messages from the broker.
+	private Encoder MessageEncoder;
+
 	/// Whether we've sent a Close message or not. Once a Close message has been received, any
 	/// further input can be ignored until we get a confirmation that the upstream's Close message
 	/// has been replied to.
@@ -317,13 +319,15 @@ public class WebSocketServer : IManagedSocket, IDisposable
 		Broker = broker;
 		Parser = new WebSocketClientParser();
 		FeedBuffer = Parser.RentFeedBuffer();
-		SendBuffer = new byte[4096];
+		SendBuffer = ArrayPool<byte>.Shared.Rent(4096);
 		MessageFrame = new WebSocketFrame();
+		MessageEncoder = Encoding.UTF8.GetEncoder();
 	}
 
 	public void Dispose()
 	{
 		Parser.Dispose();
+		ArrayPool<byte>.Shared.Return(SendBuffer);
 	}
 
 	public void OnConnected()
@@ -361,16 +365,24 @@ public class WebSocketServer : IManagedSocket, IDisposable
 		MessageFrame.IsLastFragment = true;
 		MessageFrame.OpCode = MessageType.Text;
 		MessageFrame.Mask = null;
-		MessageFrame.Payload = Encoding.UTF8.GetBytes(json);
+		MessageFrame.Payload = MessageEncoder.GetByteCount(json, true);
 
 		var frameSize = MessageFrame.RequiredCapacity();
 		if (SendBuffer.Length < frameSize)
 		{
-			SendBuffer = new byte[frameSize];
+			ArrayPool<byte>.Shared.Return(SendBuffer);
+			SendBuffer = ArrayPool<byte>.Shared.Rent(frameSize);
 		}
 
-		var written = MessageFrame.CopyTo(SendBuffer);
-		Manager.SendAll(this, written);
+		var dataSpan = MessageFrame.WriteHeaderTo(new Span<byte>(SendBuffer));
+
+		var charsRead = 0;
+		var bytesWritten = 0;
+		var completed = false;
+		MessageEncoder.Convert(json, dataSpan, true, out charsRead, out bytesWritten, out completed);
+		MessageFrame.MaskPayloadInBuffer(dataSpan);
+
+		Manager.SendAll(this, new Memory<byte>(SendBuffer, 0, frameSize));
 	}
 
 	private void ProcessUpstreamMessage(WebSocketMessage message)
@@ -397,16 +409,17 @@ public class WebSocketServer : IManagedSocket, IDisposable
 
 	private void SendPong(Span<byte> payload)
 	{
-		var buffer = new byte[payload.Length];
-		payload.CopyTo(buffer);
-
 		MessageFrame.IsLastFragment = true;
 		MessageFrame.OpCode = MessageType.Pong;
 		MessageFrame.Mask = null;
-		MessageFrame.Payload = buffer;
+		MessageFrame.Payload = payload.Length;
 
-		var written = MessageFrame.CopyTo(SendBuffer);
-		Manager.SendAll(this, written);
+		var frameSize = MessageFrame.RequiredCapacity();
+		var dataSpan = MessageFrame.WriteHeaderTo(new Span<byte>(SendBuffer));
+
+		payload.CopyTo(dataSpan);
+		MessageFrame.MaskPayloadInBuffer(dataSpan);
+		Manager.SendAll(this, new Memory<byte>(SendBuffer, 0, frameSize));
 	}
 
 	private void SendClose()
@@ -417,9 +430,10 @@ public class WebSocketServer : IManagedSocket, IDisposable
 		MessageFrame.IsLastFragment = true;
 		MessageFrame.OpCode = MessageType.Close;
 		MessageFrame.Mask = null;
-		MessageFrame.Payload = null;
+		MessageFrame.Payload = 0;
 
-		var written = MessageFrame.CopyTo(SendBuffer);
-		Manager.SendAll(this, written);
+		var frameSize = MessageFrame.RequiredCapacity();
+		MessageFrame.WriteHeaderTo(new Span<byte>(SendBuffer));
+		Manager.SendAll(this, new Memory<byte>(SendBuffer, 0, frameSize));
 	}
 }

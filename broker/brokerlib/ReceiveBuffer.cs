@@ -3,7 +3,7 @@ namespace brokerlib;
 
 /// A wrapper around a basic buffer that provides operations that are useful for
 /// socket receivers.
-public struct ReceiveBuffer
+public struct ReceiveBuffer : IDisposable
 {
     /// Backing storage for saved and newly written data
     private byte[] Buffer;
@@ -13,8 +13,13 @@ public struct ReceiveBuffer
 
     public ReceiveBuffer(int size)
     {
-        Buffer = new byte[size];
+        Buffer = ArrayPool<byte>.Shared.Rent(size);
         WriteCursor = 0;
+    }
+
+    public void Dispose()
+    {
+        ArrayPool<byte>.Shared.Return(Buffer);
     }
 
     /// Whether the buffer is currently full or not. If true, calling WritableSlice would return a

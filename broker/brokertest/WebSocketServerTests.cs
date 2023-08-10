@@ -14,15 +14,16 @@ public class WebScoketServerTests : TestUtil
 
         var id = Guid.NewGuid().ToString();
         var message = "{\"id\": \"" + id + "\", \"line\": \"stuff and things\"}";
+        var messageBytes = Encoding.UTF8.GetBytes(message);
 
         var request = new WebSocketFrame()
         {
             IsLastFragment = true,
             OpCode = MessageType.Text,
             Mask = FillRandomBytes(4),
-            Payload = Encoding.UTF8.GetBytes(message),
+            Payload = messageBytes.Length,
         };
-        var requestBytes = request.ToArray();
+        var requestBytes = request.ToArray(messageBytes);
         manager.EnqueueReceive(new Memory<byte>(requestBytes));
         // Never actually sent, just a backstop to ensure there is a message in
         // the queue when Receive is called
@@ -54,6 +55,8 @@ public class WebScoketServerTests : TestUtil
 
         var id = Guid.NewGuid().ToString();
         var message = "{\"id\": \"" + id + "\", \"hello\": \"hi world\"}";
+        var messageBytes = Encoding.UTF8.GetBytes(message);
+
         server.OnConnected();
         server.SendToUpstream(message);
 
@@ -62,9 +65,9 @@ public class WebScoketServerTests : TestUtil
             IsLastFragment = true,
             OpCode = MessageType.Text,
             Mask = null,
-            Payload = Encoding.UTF8.GetBytes(message),
+            Payload = messageBytes.Length,
         };
-        var requestBytes = request.ToArray();
+        var requestBytes = request.ToArray(messageBytes);
 
         Assert.AreEqual(requestBytes, manager.RawOutput());
         Assert.AreEqual(0, broker.Commands.Count);
@@ -83,9 +86,10 @@ public class WebScoketServerTests : TestUtil
             IsLastFragment = true,
             OpCode = MessageType.Ping,
             Mask = FillRandomBytes(4),
-            Payload = FillRandomBytes(100),
+            Payload = 100,
         };
-        var requestBytes = request.ToArray();
+        var messageBytes = FillRandomBytes(100);
+        var requestBytes = request.ToArray(messageBytes);
         manager.EnqueueReceive(new Memory<byte>(requestBytes));
         // Never actually sent, just a backstop to ensure there is a message in
         // the queue when Receive is called
@@ -98,7 +102,7 @@ public class WebScoketServerTests : TestUtil
             Mask = null,
             Payload = request.Payload,
         };
-        var responseBytes = response.ToArray();
+        var responseBytes = response.ToArray(messageBytes);
 
         server.OnConnected();
         manager.Step();
@@ -120,9 +124,9 @@ public class WebScoketServerTests : TestUtil
             IsLastFragment = true,
             OpCode = MessageType.Close,
             Mask = FillRandomBytes(4),
-            Payload = FillRandomBytes(100),
+            Payload = 100,
         };
-        var requestBytes = request.ToArray();
+        var requestBytes = request.ToArray(FillRandomBytes(100));
         manager.EnqueueReceive(new Memory<byte>(requestBytes));
         // Must *not* enqueue the dummy message here, we should never receive after a Close
 
@@ -131,9 +135,9 @@ public class WebScoketServerTests : TestUtil
             IsLastFragment = true,
             OpCode = MessageType.Close,
             Mask = null,
-            Payload = null,
+            Payload = 0,
         };
-        var responseBytes = response.ToArray();
+        var responseBytes = response.ToArray(null);
 
         server.OnConnected();
         manager.Step();
@@ -155,9 +159,9 @@ public class WebScoketServerTests : TestUtil
             IsLastFragment = true,
             OpCode = MessageType.Binary,
             Mask = FillRandomBytes(4),
-            Payload = FillRandomBytes(100),
+            Payload = 100,
         };
-        var requestBytes = request.ToArray();
+        var requestBytes = request.ToArray(FillRandomBytes(100));
         manager.EnqueueReceive(new Memory<byte>(requestBytes));
         // Never actually sent, just a backstop to ensure there is a message in
         // the queue when Receive is called
@@ -183,9 +187,9 @@ public class WebScoketServerTests : TestUtil
             IsLastFragment = true,
             OpCode = MessageType.Pong,
             Mask = FillRandomBytes(4),
-            Payload = FillRandomBytes(100),
+            Payload = 100,
         };
-        var requestBytes = request.ToArray();
+        var requestBytes = request.ToArray(FillRandomBytes(100));
         manager.EnqueueReceive(new Memory<byte>(requestBytes));
         // Never actually sent, just a backstop to ensure there is a message in
         // the queue when Receive is called

@@ -1,5 +1,7 @@
 // -*- mode: csharp; fill-column: 100 -*-
+using System.Security.Cryptography;
 using System.IO;
+using System.Net.Sockets;
 using System.Text;
 
 namespace brokerlib;
@@ -26,10 +28,91 @@ public enum MessageType
 	Pong,
 }
 
-/// A parsed WebSocket frame. This does not preserve any information about fragmentation - each
-/// client frame is a complete message, with the content being all fragments content combined and in
-/// order.
-public class WebSocketClientFrame : IDisposable, IEquatable<WebSocketClientFrame>
+/// Constants and utility functions for implementing the WebSocket protocol.
+public static class WebSocketProto
+{
+    public const int FIN_OFFSET = 7;
+    public const int RSV_OFFSET = 4;
+    public const int OPCODE_OFFSET = 0;
+
+	public const byte FIN_FLAG = 0b10000000;
+	public const byte RSV_FLAG = 0b01110000;
+	public const byte OPCODE_FLAG = 0b00001111;
+
+	public const int MASK_OFFSET = 7;
+	public const int PAYLOAD_LEN_OFFSET = 0;
+
+	public const byte MASK_FLAG = 0b10000000;
+	public const byte PAYLOAD_LEN_FLAG = 0b01111111;
+
+	public const byte PAYLOAD_64_BITS = 127;
+	public const byte PAYLOAD_16_BITS = 126;
+
+	public const byte OP_CONTINUATION = 0;
+	public const byte OP_TEXT = 1;
+	public const byte OP_BINARY = 2;
+	public const byte OP_CLOSE = 8;
+	public const byte OP_PING = 9;
+	public const byte OP_PONG = 10;
+
+	public const string HANDSHAKE_KEY = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+	/// Gets the MessageType for an opcode value.
+	public static MessageType OpcodeToMessageType(int opcode)
+	{
+		switch (opcode)
+		{
+			case WebSocketProto.OP_CONTINUATION: return MessageType.Continuation;
+			case WebSocketProto.OP_TEXT: return MessageType.Text;
+			case WebSocketProto.OP_BINARY: return MessageType.Binary;
+			case WebSocketProto.OP_CLOSE: return MessageType.Close;
+			case WebSocketProto.OP_PING: return MessageType.Ping;
+			case WebSocketProto.OP_PONG: return MessageType.Pong;
+		}
+
+		throw new ArgumentException($"Opcode {opcode:x} not recognized");
+	}
+
+	/// Gets the opcode for a MessageType value.
+	public static int MessageTypeToOpcode(MessageType type)
+	{
+		switch (type)
+		{
+			case MessageType.Continuation: return WebSocketProto.OP_CONTINUATION;
+			case MessageType.Text: return WebSocketProto.OP_TEXT;
+			case MessageType.Binary: return WebSocketProto.OP_BINARY;
+			case MessageType.Close: return WebSocketProto.OP_CLOSE;
+			case MessageType.Ping: return WebSocketProto.OP_PING;
+			case MessageType.Pong: return WebSocketProto.OP_PONG;
+		}
+
+		throw new ArgumentException($"MessageType {type} not recognized");
+	}
+
+	/// XORs each mask byte with each payload byte, in-place.
+	public static void UnmaskFrame(Span<byte> frame, byte[] mask, int maskOffset=0)
+	{
+		var maskIdx = maskOffset % 4;
+		for (var i = 0; i < frame.Length; i++)
+		{
+			frame[i] = (byte)(frame[i] ^ mask[maskIdx & 3]);
+			maskIdx++;
+		}
+	}
+
+}
+
+
+/// A parsed WebSocket message, possibly being sent over the wire as multiple frames. The message
+/// may be used in one of two ways:
+///
+/// - When the WebSocketClientParser parses a frame and sends it to its callback, the message is
+///   deallocated when the callback returns. This is to allow reusing the input buffer when parsing
+///   messages.
+///
+/// - If the message needs to last beyond the callback, it should be copied to an owned version that
+///   is responsible for managing its own buffer.
+public class WebSocketMessage : IDisposable, IEquatable<WebSocketMessage>
 {
 	/// The type of message this frame contains. Never contains the Continuation value.
 	public MessageType Type { get; private set; }
@@ -64,7 +147,7 @@ public class WebSocketClientFrame : IDisposable, IEquatable<WebSocketClientFrame
 	}
 
 	/// Creates a WebSocketClientFrame that borrows its payload data from the given array segment.
-	public WebSocketClientFrame(MessageType type, ArraySegment<byte> buffer)
+	public WebSocketMessage(MessageType type, ArraySegment<byte> buffer)
 	{
 		Type = type;
 		DataBuffer = buffer;
@@ -72,14 +155,15 @@ public class WebSocketClientFrame : IDisposable, IEquatable<WebSocketClientFrame
 	}
 
 	/// Creates a WebSocketClientFrame that owns its payload data.
-	public WebSocketClientFrame(MessageType type, byte[] buffer)
+	public WebSocketMessage(MessageType type, byte[] buffer)
 	{
 		Type = type;
 		DataBuffer = new ArraySegment<byte>(buffer);
 		OwnsDataBuffer = true;
 	}
 
-	public WebSocketClientFrame ToOwned()
+	/// Creates a copy of this message that owns its own memory.
+	public WebSocketMessage ToOwned()
 	{
 		if (DataBuffer == null)
 		{
@@ -88,10 +172,10 @@ public class WebSocketClientFrame : IDisposable, IEquatable<WebSocketClientFrame
 
 		var buffer = new byte[DataBuffer.Value.Count];
 		DataBuffer.Value.CopyTo(buffer);
-		return new WebSocketClientFrame(Type, buffer);
+		return new WebSocketMessage(Type, buffer);
 	}
 
-	public bool Equals(WebSocketClientFrame? other)
+	public bool Equals(WebSocketMessage? other)
 	{
 		return other != null
 			&& Type == other.Type
@@ -127,78 +211,6 @@ public class WebSocketClientFrame : IDisposable, IEquatable<WebSocketClientFrame
 public class WebSocketParseException : Exception
 {
 	public WebSocketParseException(string reason): base(reason) {}
-}
-
-/// Constants and utility functions for implementing the WebSocket protocol.
-public static class WebSocketProto
-{
-    public const int FIN_OFFSET = 7;
-    public const int RSV_OFFSET = 4;
-    public const int OPCODE_OFFSET = 0;
-
-	public const byte FIN_FLAG = 0b10000000;
-	public const byte RSV_FLAG = 0b01110000;
-	public const byte OPCODE_FLAG = 0b00001111;
-
-	public const int MASK_OFFSET = 7;
-	public const int PAYLOAD_LEN_OFFSET = 0;
-
-	public const byte MASK_FLAG = 0b10000000;
-	public const byte PAYLOAD_LEN_FLAG = 0b01111111;
-
-	public const byte PAYLOAD_64_BITS = 127;
-	public const byte PAYLOAD_16_BITS = 126;
-
-	public const byte OP_CONTINUATION = 0;
-	public const byte OP_TEXT = 1;
-	public const byte OP_BINARY = 2;
-	public const byte OP_CLOSE = 8;
-	public const byte OP_PING = 9;
-	public const byte OP_PONG = 10;
-
-	/// Gets the MessageType for an opcode value.
-	public static MessageType OpcodeToMessageType(int opcode)
-	{
-		switch (opcode)
-		{
-			case WebSocketProto.OP_CONTINUATION: return MessageType.Continuation;
-			case WebSocketProto.OP_TEXT: return MessageType.Text;
-			case WebSocketProto.OP_BINARY: return MessageType.Binary;
-			case WebSocketProto.OP_CLOSE: return MessageType.Close;
-			case WebSocketProto.OP_PING: return MessageType.Ping;
-			case WebSocketProto.OP_PONG: return MessageType.Pong;
-		}
-
-		throw new ArgumentException($"Opcode {opcode:x} not recognized");
-	}
-
-	/// Gets the opcode for a MessageType value.
-	public static int MessageTypeToOpcode(MessageType type)
-	{
-		switch (type)
-		{
-			case MessageType.Continuation: return WebSocketProto.OP_CONTINUATION;
-			case MessageType.Text: return WebSocketProto.OP_TEXT;
-			case MessageType.Binary: return WebSocketProto.OP_BINARY;
-			case MessageType.Close: return WebSocketProto.OP_CLOSE;
-			case MessageType.Ping: return WebSocketProto.OP_PING;
-			case MessageType.Pong: return WebSocketProto.OP_PONG;
-		}
-
-		throw new ArgumentException($"MessageType {type} not recognized");
-	}
-
-	/// XORs each mask byte with each payload byte, in-place.
-	public static void UnmaskFrame(ArraySegment<byte> frame, byte[] mask, int maskOffset=0)
-	{
-		var maskIdx = maskOffset % 4;
-		for (var i = 0; i < frame.Count; i++)
-		{
-			frame[i] = (byte)(frame[i] ^ mask[maskIdx % 4]);
-			maskIdx++;
-		}
-	}
-
 }
 
 public sealed class WebSocketClientParser : IDisposable
@@ -385,7 +397,7 @@ public sealed class WebSocketClientParser : IDisposable
 	/// parser and cannot be retrieved using the frame instance.
 	///
 	/// The data is assumed to start at offset 0 within the feed buffer.
-	public void Feed(int size, Action<WebSocketClientFrame> callback)
+	public void Feed(int size, Action<WebSocketMessage> callback)
 	{
 		if (FeedBuffer == null)
 		{
@@ -396,7 +408,7 @@ public sealed class WebSocketClientParser : IDisposable
 		var offset = 0;
 		while (offset < size)
 		{
-			WebSocketClientFrame? frame = ReadNextFrame(buffer, ref offset);
+			WebSocketMessage? frame = ReadNextFrame(buffer, ref offset);
 			if (frame != null)
 			{
 				using (frame)
@@ -409,7 +421,7 @@ public sealed class WebSocketClientParser : IDisposable
 
 	/// Reads at most one frame from the feed buffer, and returns that frame (if there is one) along
 	/// with the next read offset.
-	private WebSocketClientFrame? ReadNextFrame(Span<byte> input, ref int offset)
+	private WebSocketMessage? ReadNextFrame(Span<byte> input, ref int offset)
 	{
 		while (offset < input.Length)
 		{
@@ -591,7 +603,7 @@ public sealed class WebSocketClientParser : IDisposable
 		offset++;
 	}
 
-	private WebSocketClientFrame? ParseData(Span<byte> input, ref int offset)
+	private WebSocketMessage? ParseData(Span<byte> input, ref int offset)
 	{
 		var inputRemaining = input.Length - offset;
 		var toCopy = Math.Min(inputRemaining, Counter);
@@ -609,7 +621,7 @@ public sealed class WebSocketClientParser : IDisposable
 			State = ParserState.FlagsAndOpcode;
 			Counter -= toCopy;
 			offset += toCopy;
-			return new WebSocketClientFrame(type, containedBuffer);
+			return new WebSocketMessage(type, containedBuffer);
 		}
 
 		if (toCopy > 0)
@@ -642,7 +654,7 @@ public sealed class WebSocketClientParser : IDisposable
 		if (!IsControl && ExpectFragment) return null;
 
 		var combinedBuffer = FlushBufferList(targetBufferList);
-		return new WebSocketClientFrame(type, combinedBuffer);
+		return new WebSocketMessage(type, combinedBuffer);
 	}
 }
 
@@ -670,71 +682,110 @@ public class WebSocketFrame
 
 	private byte[]? _Mask;
 
-	/// The payload. If the MessageType is text, this must be valid UTF-8 after combining with the
-	/// other fragments.
-	public byte[]? Payload { get; set; }
+	/// The total size of the payload.
+	public int Payload { get; set; }
 
-	/// Serializes the frame to the given output stream
-	public void Write(Stream output)
+	/// Determines the size of the buffer required to serialized this frame, including both its
+	/// header and its data.
+	public int RequiredCapacity()
 	{
-		var flagsOpcode = (IsLastFragment ? 1 : 0) << WebSocketProto.FIN_OFFSET
+		// Including flags/opcode and base payload length
+		var size = 2;
+		if (Mask != null)
+		{
+			size += 4;
+		}
+
+		if (Payload > UInt16.MaxValue)
+		{
+			size += 8;
+		}
+		else if (Payload > 125)
+		{
+			size += 2;
+		}
+		size += Payload;
+
+		return size;
+	}
+
+	/// Serializes the header of the frame to the given buffer. Returns the number of bytes written.
+	private int WriteHeader(Span<byte> destination)
+	{
+		var offset = 0;
+		var flagsOpCode = (IsLastFragment ? 1 : 0) << WebSocketProto.FIN_OFFSET
 			| WebSocketProto.MessageTypeToOpcode(OpCode);
-		output.WriteByte((byte) flagsOpcode);
+		destination[offset++] = (byte) flagsOpCode;
 
 		var maskBit = (Mask == null ? 0 : 1) << WebSocketProto.MASK_OFFSET;
-		var payloadSize = Payload?.Length ?? 0;
-		if (payloadSize <= 125)
+		if (Payload <= 125)
 		{
-			output.WriteByte((byte)(maskBit | payloadSize));
+			destination[offset++] = (byte) (maskBit | Payload);
 		}
-		else if (payloadSize <= UInt16.MaxValue)
+		else if (Payload <= UInt16.MaxValue)
 		{
-			output.WriteByte((byte)(maskBit | 126));
-			output.WriteByte((byte)(payloadSize >> 8));
-			output.WriteByte((byte)payloadSize);
+			destination[offset++] = (byte)(maskBit | 126);
+			destination[offset++] = (byte)(Payload >> 8);
+			destination[offset++] = (byte)Payload;
 		}
 		else
 		{
-			output.WriteByte((byte)(maskBit | 127));
+			destination[offset++] = (byte)(maskBit | 127);
 
 			// byte[].Length fits in an int, the upper 32-bits are not needed to represent the
 			// length
-			output.WriteByte(0);
-			output.WriteByte(0);
-			output.WriteByte(0);
-			output.WriteByte(0);
-			output.WriteByte((byte)(payloadSize >> 24));
-			output.WriteByte((byte)(payloadSize >> 16));
-			output.WriteByte((byte)(payloadSize >> 8));
-			output.WriteByte((byte)payloadSize);
+			destination[offset++] = 0;
+			destination[offset++] = 0;
+			destination[offset++] = 0;
+			destination[offset++] = 0;
+			destination[offset++] = (byte)(Payload >> 24);
+			destination[offset++] = (byte)(Payload >> 16);
+			destination[offset++] = (byte)(Payload >> 8);
+			destination[offset++] = (byte)Payload;
 		}
 
 		if (Mask != null)
 		{
-			output.Write(Mask);
+			destination[offset++] = Mask[0];
+			destination[offset++] = Mask[1];
+			destination[offset++] = Mask[2];
+			destination[offset++] = Mask[3];
 		}
 
-		if (Payload != null)
-		{
-			if (Mask == null)
-			{
-				output.Write(Payload);
-			}
-			else
-			{
-				for (var i = 0; i < Payload.Length; i++)
-				{
-					output.WriteByte((byte)(Payload[i] ^ Mask[i % 4]));
-				}
-			}
-		}
+		return offset;
 	}
 
-	/// Serializes the frame to a new MemoryStream and returns its array
-	public byte[] ToArray()
+	/// Serializes the frame header to the given position within the byte array. Returns a Span
+	/// designating the space where the payload data must be copied.
+	public Span<byte> WriteHeaderTo(Span<byte> destination)
 	{
-		var buffer = new MemoryStream();
-		Write(buffer);
-		return buffer.ToArray();
+		var headerSize = WriteHeader(destination);
+		return destination.Slice(headerSize, Payload);
+	}
+
+	/// Masks the payload data within the given span, obtianed from WriteHeaderTo.
+	public void MaskPayloadInBuffer(Span<byte> payload)
+	{
+		if (Mask == null) return;
+		WebSocketProto.UnmaskFrame(payload, Mask);
+	}
+
+	/// Serializes the frame to a new byte array.
+	public byte[] ToArray(byte[]? payload)
+	{
+		if ((payload == null && Payload != 0)
+			|| (payload != null && Payload != payload.Length))
+		{
+			throw new ArgumentException("Provided data buffer has different size than Payload field.");
+		}
+
+		var buffer = new byte[RequiredCapacity()];
+		var dataSpan = WriteHeaderTo(buffer);
+		if (payload != null)
+		{
+			new Span<byte>(payload).CopyTo(dataSpan);
+			MaskPayloadInBuffer(dataSpan);
+		}
+		return buffer;
 	}
 }

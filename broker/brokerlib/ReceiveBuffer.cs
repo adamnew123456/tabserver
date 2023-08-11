@@ -20,6 +20,7 @@ public struct ReceiveBuffer : IDisposable
     public void Dispose()
     {
         ArrayPool<byte>.Shared.Return(Buffer);
+        GC.SuppressFinalize(this);
     }
 
     /// Whether the buffer is currently full or not. If true, calling WritableSlice would return a

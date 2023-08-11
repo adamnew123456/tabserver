@@ -328,6 +328,7 @@ public class WebSocketServer : IManagedSocket, IDisposable
 	{
 		Parser.Dispose();
 		ArrayPool<byte>.Shared.Return(SendBuffer);
+		GC.SuppressFinalize(this);
 	}
 
 	public void OnConnected()

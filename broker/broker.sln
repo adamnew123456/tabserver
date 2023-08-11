@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "brokerlib", "brokerlib\brok
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "brokertest", "brokertest\brokertest.csproj", "{C2D90300-BDEA-4083-A795-76FB0BBF21FF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "brokerbench", "brokerbench\brokerbench.csproj", "{8ED9C47B-7DD2-43CE-9C63-2F02AB2D9E97}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +32,9 @@ Global
 		{C2D90300-BDEA-4083-A795-76FB0BBF21FF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C2D90300-BDEA-4083-A795-76FB0BBF21FF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C2D90300-BDEA-4083-A795-76FB0BBF21FF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8ED9C47B-7DD2-43CE-9C63-2F02AB2D9E97}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8ED9C47B-7DD2-43CE-9C63-2F02AB2D9E97}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8ED9C47B-7DD2-43CE-9C63-2F02AB2D9E97}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8ED9C47B-7DD2-43CE-9C63-2F02AB2D9E97}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

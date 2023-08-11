@@ -1,7 +1,6 @@
 // -*- mode: csharp; fill-column: 100 -*-
-using System.Security.Cryptography;
 using System.IO;
-using System.Net.Sockets;
+using System.Numerics;
 using System.Text;
 
 namespace brokerlib;
@@ -92,16 +91,83 @@ public static class WebSocketProto
 	/// XORs each mask byte with each payload byte, in-place.
 	public static void UnmaskFrame(Span<byte> frame, byte[] mask, int maskOffset=0)
 	{
-		var maskIdx = maskOffset % 4;
-		for (var i = 0; i < frame.Length; i++)
+		// The naive way would look like this:
+		//
+		// for (var i = 0; i < frame.Length; i++)
+		//   frame[i] = frame[i] ^ mask[(maskOffset + i) & 3]
+		//
+		// This is slow because it's performing the XOR 1 byte at a time, when the machine could do
+		// them 4 (or more) bytes at a time at no extra cost. We can get a big speedup by treating
+		// the mask as a single 32-bit integer and treating the frame as a collection of 32-bit
+		// integers.
+		//
+		// This means we have to clean up the edges on both sides:
+		//
+		// - At the start, maskOffset may not be a multiple of 4. This isn't strictly required, but
+		//   "aligning" the offets to the start of the mask simplifies converting the mask to an
+		//   int. Without the alignment, we'd have to rotate the mask so that the first byte
+		//   (depending on endianness!) corresponds to the initial maskOffset.
+		//
+		// - At the end, the remaining data in the frame may not be a multiple of 4.
+		//
+		// We can get an even bigger speedup by moving beyond simple types into SIMD types. A
+		// machine that supports AVX2 supports 256-bit vector registers that can operate on 8 32-bit
+		// integers in one go. This means that each individual XOR operates on 32x as much data as
+		// the naive loop case.
+		//
+		// In terms of the numbers (recorded on a Ryzen 7 3700X), this is the time it takes to
+		// unmask 1000 bytes worth of data:
+		//
+		//   Naive: 702 ns
+		//   int32: 190 ns
+		//   int64: 107 ns
+		//   SIMD:   39 ns
+		var maskInt = BitConverter.ToUInt32(mask);
+		var maskIdx = maskOffset & 3;
+		var frameOffset = 0;
+
+		// Re-align the mask offset to the mask, so we can apply it directly without any shifting
+		while (frameOffset < frame.Length)
 		{
-			frame[i] = (byte)(frame[i] ^ mask[maskIdx & 3]);
+			if (maskIdx == 0 || maskIdx == 4) break;
+			frame[frameOffset] = (byte)(frame[frameOffset] ^ mask[maskIdx]);
+			frameOffset++;
+			maskIdx++;
+		}
+
+		if (Vector.IsHardwareAccelerated)
+		{
+			var maskVec = new Vector<uint>(maskInt);
+			var vecByteSize = Vector<uint>.Count * sizeof(uint);
+			while (frame.Length - frameOffset >= vecByteSize)
+			{
+				var block = frame.Slice(frameOffset, vecByteSize);
+				var blockVec = new Vector<uint>(block);
+				blockVec ^= maskVec;
+				blockVec.CopyTo(block);
+				frameOffset += vecByteSize;
+			}
+		}
+
+        while (frame.Length - frameOffset >= 4)
+		{
+			var block = frame.Slice(frameOffset, 4);
+			var frameInt = BitConverter.ToUInt32(block);
+			BitConverter.TryWriteBytes(block, frameInt ^ maskInt);
+			frameOffset += 4;
+		}
+
+		// Clean up anything that doesn't fit within the blocks
+		maskIdx = 0;
+		while (frameOffset < frame.Length)
+		{
+			frame[frameOffset] = (byte)(frame[frameOffset] ^ mask[maskIdx]);
+			frameOffset++;
 			maskIdx++;
 		}
 	}
 
 }
-
 
 /// A parsed WebSocket message, possibly being sent over the wire as multiple frames. The message
 /// may be used in one of two ways:
@@ -261,10 +327,6 @@ public sealed class WebSocketClientParser : IDisposable
 		Data,
 	}
 
-	/// The pool that owns the buffers where we store response bodies that span
-	/// multiple Feed calls.
-	private ArrayPool<byte> BufferPool;
-
 	/// The buffers that store previous data fragment bodies.
 	private List<ArraySegment<byte>> DataBuffers;
 
@@ -316,7 +378,6 @@ public sealed class WebSocketClientParser : IDisposable
 
 	public WebSocketClientParser()
 	{
-		BufferPool = ArrayPool<byte>.Shared;
 		DataBuffers = new List<ArraySegment<byte>>();
 		ControlBuffers = new List<ArraySegment<byte>>();
 		Mask = new byte[4];
@@ -330,7 +391,7 @@ public sealed class WebSocketClientParser : IDisposable
 	{
 		if (FeedBuffer == null)
 		{
-			FeedBuffer = BufferPool.Rent(FEED_BUFFER_SIZE);
+			FeedBuffer = ArrayPool<byte>.Shared.Rent(FEED_BUFFER_SIZE);
 		}
 		return new Memory<byte>(FeedBuffer);
 	}
@@ -347,19 +408,19 @@ public sealed class WebSocketClientParser : IDisposable
 	{
 		foreach (var buffer in DataBuffers)
 		{
-			BufferPool.Return(buffer.Array);
+			ArrayPool<byte>.Shared.Return(buffer.Array);
 		}
 		DataBuffers.Clear();
 
 		foreach (var buffer in ControlBuffers)
 		{
-			BufferPool.Return(buffer.Array);
+			ArrayPool<byte>.Shared.Return(buffer.Array);
 		}
 		ControlBuffers.Clear();
 
 		if (FeedBuffer != null)
 		{
-			BufferPool.Return(FeedBuffer);
+			ArrayPool<byte>.Shared.Return(FeedBuffer);
 			FeedBuffer = null;
 		}
 
@@ -373,14 +434,14 @@ public sealed class WebSocketClientParser : IDisposable
 	private ArraySegment<byte> FlushBufferList(List<ArraySegment<byte>> bufferList)
 	{
 		var combinedSize = bufferList.Select(b => b.Count).Sum();
-		var combinedBuffer = BufferPool.Rent(combinedSize);
+		var combinedBuffer = ArrayPool<byte>.Shared.Rent(combinedSize);
 		var offset = 0;
 		foreach (var buffer in bufferList)
 		{
 			var bufferSegment = new ArraySegment<byte>(combinedBuffer, offset, buffer.Count);
 			buffer.CopyTo(bufferSegment);
 			offset += buffer.Count;
-			BufferPool.Return(buffer.Array);
+			ArrayPool<byte>.Shared.Return(buffer.Array);
 		}
 
 		bufferList.Clear();
@@ -636,7 +697,7 @@ public sealed class WebSocketClientParser : IDisposable
 				CombinedFragmentSize = newCombinedSize;
 			}
 
-			var buffer = BufferPool.Rent(toCopy);
+			var buffer = ArrayPool<byte>.Shared.Rent(toCopy);
 			var payload = new Span<byte>(FeedBuffer, offset, toCopy);
 			payload.CopyTo(buffer);
 

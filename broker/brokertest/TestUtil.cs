@@ -171,3 +171,71 @@ public class DummyServerBroker : IBrokerServer
 		Commands.Add(command);
 	}
 }
+
+public class DummyClientHandle : IEquatable<DummyClientHandle>
+{
+	private static int IdGenerator = 0;
+
+	public static void ResetIdGenerator()
+	{
+		IdGenerator = 0;
+	}
+
+	public string Id;
+	public string Name;
+	public List<string> Fragments = new List<string>();
+
+	public DummyClientHandle(string name)
+	{
+		Id = IdGenerator.ToString();
+		IdGenerator++;
+		Name = name;
+	}
+
+    public bool Equals(DummyClientHandle? other)
+    {
+		if (other == null) return false;
+		return this.Id == other.Id;
+    }
+}
+
+public class DummyClientBroker : IBrokerClient<DummyClientHandle>
+{
+	public ISet<DummyClientHandle> RegisteredClients = new HashSet<DummyClientHandle>();
+
+    public void ForwardToServer(DummyClientHandle client, string message, bool flush)
+    {
+		if (client == null)
+		{
+			throw new ArgumentException("Cannot unregister null client");
+		}
+
+		client.Fragments.Add(message);
+		if (flush)
+		{
+			client.Fragments.Add("\n");
+		}
+    }
+
+    public DummyClientHandle RegisterClient(string name)
+    {
+		var handle = new DummyClientHandle(name);
+		RegisteredClients.Add(handle);
+		return handle;
+    }
+
+    public void UnregisterClient(DummyClientHandle client)
+    {
+		if (client == null)
+		{
+			throw new ArgumentException("Cannot unregister null client");
+		}
+
+		if (!RegisteredClients.Contains(client))
+		{
+			throw new ArgumentException($"Cannot unregister non-existent client {client.Id}");
+		}
+
+		RegisteredClients.Remove(client);
+    }
+}

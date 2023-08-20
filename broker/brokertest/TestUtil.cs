@@ -1,4 +1,5 @@
 // -*- mode: csharp; fill-column: 100 -*-
+using System.Buffers;
 using System.Text;
 
 public abstract class TestUtil
@@ -36,6 +37,42 @@ public abstract class TestUtil
 			yield return new Memory<byte>(buffer, offset, thisChunk);
 			offset += thisChunk;
 		}
+	}
+
+	/// Sends a binary message to the given broker connection.
+	protected void SendBytesAsBroker(IBrokerConnection connection, byte[] message)
+	{
+		var capacity = connection.MessageCapacity(message.Length);
+		var buffer = ArrayPool<byte>.Shared.Rent(capacity);
+		var messageDest = new Span<byte>(buffer, capacity - message.Length, message.Length);
+		new Span<byte>(message).CopyTo(messageDest);
+
+		var messageSegment = new ArraySegment<byte>(buffer, 0, capacity);
+		connection.SendMessage(messageSegment, message.Length);
+	}
+
+	/// Sends a text message (UTF-8 encoded) to the given broker connection.
+	protected void SendMessageAsBroker(IBrokerConnection connection, string message)
+	{
+		var encoder = Encoding.UTF8.GetEncoder();
+		var messageLength = encoder.GetByteCount(message, true);
+
+		var capacity = connection.MessageCapacity(messageLength);
+		var buffer = ArrayPool<byte>.Shared.Rent(capacity);
+		var messageDest = new Span<byte>(buffer, capacity - message.Length, message.Length);
+
+		var charsRead = 0;
+		var bytesWritten = 0;
+		var completed = false;
+		encoder.Convert(message,
+						messageDest,
+						true,
+						out charsRead,
+						out bytesWritten,
+						out completed);
+
+		var messageSegment = new ArraySegment<byte>(buffer, 0, capacity);
+		connection.SendMessage(messageSegment, message.Length);
 	}
 }
 

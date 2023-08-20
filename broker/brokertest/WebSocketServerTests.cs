@@ -58,7 +58,7 @@ public class WebScoketServerTests : TestUtil
         var messageBytes = Encoding.UTF8.GetBytes(message);
 
         server.OnConnected();
-        server.SendToUpstream(message);
+        SendMessageAsBroker(server, message);
 
         var request = new WebSocketFrame()
         {

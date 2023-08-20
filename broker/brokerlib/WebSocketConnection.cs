@@ -22,6 +22,8 @@ public enum WebSocketHandshakeStatus
 /// required headers, and then transitions to the WebSocketMessageState.
 public class WebSocketHandshake : IManagedSocket
 {
+    private const int BUFFER_SIZE = 4096;
+
 	/// HTTP status codes for errors that occur when processing the request
 	private const int INVALID_REQUEST = 400;
 	private const int NOT_FOUND = 404;
@@ -32,7 +34,7 @@ public class WebSocketHandshake : IManagedSocket
 	public ISocketManager Manager { get; private set; }
 
 	/// Buffer used for storing data from the socket
-	private ReceiveBuffer ReceiveBuffer = new ReceiveBuffer(4096);
+	private ReceiveBuffer ReceiveBuffer = new ReceiveBuffer(BUFFER_SIZE);
 
 	/// Whether the request line has been read from the request.
 	private bool SeenRequestLine;
@@ -285,8 +287,27 @@ public class WebSocketHandshake : IManagedSocket
 
 /// Handles forwarding data between connected clients and the upstream server. Assumes the handshake
 /// has already been performed and that any data received is WebSocket frames.
-public class WebSocketServer : IManagedSocket, IDisposable
+public class WebSocketServer : IManagedSocket, IBrokerConnection, IDisposable
 {
+	private struct PendingMessage
+	{
+		/// The full buffer passed to SendMessage, including the space for the WebSocket header.
+		public ArraySegment<byte> Buffer;
+
+		/// The size of the input message without any WebSocket data.
+		public int DataSize;
+
+		/// The type of message being sent
+		public MessageType OpCode;
+
+		public PendingMessage(ArraySegment<byte> buffer, int dataSize, MessageType opcode)
+		{
+			Buffer = buffer;
+			DataSize = dataSize;
+			OpCode = opcode;
+		}
+	}
+
 	/// The manager that executes our async socket requests.
 	public ISocketManager Manager { get; private set; }
 
@@ -299,19 +320,16 @@ public class WebSocketServer : IManagedSocket, IDisposable
 	/// The buffer used for decoding upstream messages, borrowed from the parser.
 	private Memory<byte> FeedBuffer;
 
-	/// The buffer used for encoding messages to send upstream
-	private byte[] SendBuffer;
-
 	/// The frame used to build messages for sending upstream
 	private WebSocketFrame MessageFrame;
-
-	/// The encoder used to serialize messages from the broker.
-	private Encoder MessageEncoder;
 
 	/// Whether we've sent a Close message or not. Once a Close message has been received, any
 	/// further input can be ignored until we get a confirmation that the upstream's Close message
 	/// has been replied to.
 	private bool SendingClose;
+
+    /// Tracks the buffers for pending messages.
+    private Queue<PendingMessage> PendingSend;
 
 	public WebSocketServer(ISocketManager manager, IBrokerServer broker)
 	{
@@ -319,15 +337,18 @@ public class WebSocketServer : IManagedSocket, IDisposable
 		Broker = broker;
 		Parser = new WebSocketClientParser();
 		FeedBuffer = Parser.RentFeedBuffer();
-		SendBuffer = ArrayPool<byte>.Shared.Rent(4096);
 		MessageFrame = new WebSocketFrame();
-		MessageEncoder = Encoding.UTF8.GetEncoder();
+        PendingSend = new Queue<PendingMessage>();
 	}
 
 	public void Dispose()
 	{
 		Parser.Dispose();
-		ArrayPool<byte>.Shared.Return(SendBuffer);
+		while (PendingSend.Count > 0)
+		{
+			var message = PendingSend.Dequeue();
+			ArrayPool<byte>.Shared.Return(message.Buffer.Array);
+		}
 		GC.SuppressFinalize(this);
 	}
 
@@ -351,6 +372,33 @@ public class WebSocketServer : IManagedSocket, IDisposable
 		if (SendingClose)
 		{
 			Manager.Close(this);
+			return;
+		}
+
+        if (PendingSend.Count > 0)
+        {
+            var lastSent = PendingSend.Dequeue();
+            ArrayPool<byte>.Shared.Return(lastSent.Buffer.Array);
+        }
+
+		SendPendingMessage();
+	}
+
+	private void SendPendingMessage()
+	{
+		if (PendingSend.Count > 0)
+		{
+            var message = PendingSend.Dequeue();
+			SendingClose = message.OpCode == MessageType.Close;
+
+			MessageFrame.IsLastFragment = true;
+			MessageFrame.OpCode = message.OpCode;
+			MessageFrame.Mask = null;
+			MessageFrame.Payload = message.DataSize;
+
+			var payload = MessageFrame.WriteHeaderTo(new Span<byte>(message.Buffer.Array));
+			MessageFrame.MaskPayloadInBuffer(payload);
+            Manager.SendAll(this, new Memory<byte>(message.Buffer.Array, message.Buffer.Offset, message.Buffer.Count));
 		}
 	}
 
@@ -359,31 +407,26 @@ public class WebSocketServer : IManagedSocket, IDisposable
 		Broker.UpstreamDisconnected();
 	}
 
-	public void SendToUpstream(string json)
+	public int MessageCapacity(int messageBytes)
 	{
-		if (SendingClose) return;
-
 		MessageFrame.IsLastFragment = true;
 		MessageFrame.OpCode = MessageType.Text;
 		MessageFrame.Mask = null;
-		MessageFrame.Payload = MessageEncoder.GetByteCount(json, true);
+		MessageFrame.Payload = messageBytes;
+		return MessageFrame.RequiredCapacity();
+	}
 
-		var frameSize = MessageFrame.RequiredCapacity();
-		if (SendBuffer.Length < frameSize)
-		{
-			ArrayPool<byte>.Shared.Return(SendBuffer);
-			SendBuffer = ArrayPool<byte>.Shared.Rent(frameSize);
-		}
+	public void SendMessage(ArraySegment<byte> buffer, int messageBytes)
+	{
+		if (SendingClose) return;
 
-		var dataSpan = MessageFrame.WriteHeaderTo(new Span<byte>(SendBuffer));
-
-		var charsRead = 0;
-		var bytesWritten = 0;
-		var completed = false;
-		MessageEncoder.Convert(json, dataSpan, true, out charsRead, out bytesWritten, out completed);
-		MessageFrame.MaskPayloadInBuffer(dataSpan);
-
-		Manager.SendAll(this, new Memory<byte>(SendBuffer, 0, frameSize));
+		PendingSend.Enqueue(new PendingMessage(buffer, messageBytes, MessageType.Text));
+        if (PendingSend.Count == 1)
+        {
+            // OnSend will continue pumping the queue as long as it is not empty, but we need to
+            // prime it if it was.
+            SendPendingMessage();
+        }
 	}
 
 	private void ProcessUpstreamMessage(WebSocketMessage message)
@@ -411,30 +454,37 @@ public class WebSocketServer : IManagedSocket, IDisposable
 	private void SendPong(Span<byte> payload)
 	{
 		MessageFrame.IsLastFragment = true;
-		MessageFrame.OpCode = MessageType.Pong;
+		MessageFrame.OpCode = MessageType.Ping;
 		MessageFrame.Mask = null;
 		MessageFrame.Payload = payload.Length;
+		var capacity = MessageCapacity(payload.Length);
 
-		var frameSize = MessageFrame.RequiredCapacity();
-		var dataSpan = MessageFrame.WriteHeaderTo(new Span<byte>(SendBuffer));
+		var buffer = ArrayPool<byte>.Shared.Rent(capacity);
+		var payloadSpan = new Span<byte>(buffer, capacity - payload.Length, payload.Length);
+		payload.CopyTo(payloadSpan);
 
-		payload.CopyTo(dataSpan);
-		MessageFrame.MaskPayloadInBuffer(dataSpan);
-		Manager.SendAll(this, new Memory<byte>(SendBuffer, 0, frameSize));
+		var bufferSegment = new ArraySegment<byte>(buffer, 0, capacity);
+		PendingSend.Enqueue(new PendingMessage(bufferSegment, payload.Length, MessageType.Pong));
+        if (PendingSend.Count == 1)
+        {
+            SendPendingMessage();
+        }
 	}
 
 	private void SendClose()
 	{
-		if (SendingClose) return;
-		SendingClose = true;
-
 		MessageFrame.IsLastFragment = true;
 		MessageFrame.OpCode = MessageType.Close;
 		MessageFrame.Mask = null;
 		MessageFrame.Payload = 0;
+		var capacity = MessageCapacity(0);
 
-		var frameSize = MessageFrame.RequiredCapacity();
-		MessageFrame.WriteHeaderTo(new Span<byte>(SendBuffer));
-		Manager.SendAll(this, new Memory<byte>(SendBuffer, 0, frameSize));
+		var buffer = ArrayPool<byte>.Shared.Rent(capacity);
+		var bufferSegment = new ArraySegment<byte>(buffer, 0, capacity);
+		PendingSend.Enqueue(new PendingMessage(bufferSegment, 0, MessageType.Close));
+        if (PendingSend.Count == 1)
+        {
+            SendPendingMessage();
+        }
 	}
 }

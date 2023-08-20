@@ -62,16 +62,20 @@ public interface IManagedSocket
 
 /// The portion of the broker that's exposed to TabServer client connections. This end of the broker
 /// can only be used to post messages received by the TabServer clients up to the upstream server.
-public interface IBrokerClient
+public interface IBrokerClient<ClientHandle>
 {
-    /// Registers a new client, returning the GUID that identifies the client to the upstream server.
-    string RegisterClient(string name);
+    /// Registers a new client, returning a handle that identifies the client to the upstream
+    /// server.
+    ClientHandle RegisterClient(string name);
 
     /// Unregisters a client
-    void UnregisterClient(string name);
+    void UnregisterClient(ClientHandle client);
 
-    /// Forwards a message from the indicated client to the upstream server.
-    void ForwardToServer(string source, string line);
+    /// Forwards a fragment of a message from the indicated client to the upstream server. flush is
+    /// used to control whether the message is complete: if it's false then the fragment is added to
+    /// the broker's buffer for this client, if it's true then the fragment (and any buffered data)
+    /// are sent to the upstream.
+    void ForwardToServer(ClientHandle client, string message, bool flush);
 }
 
 /// The portion of the broker that's exposed to the upstream server. This end is used to notify the
@@ -89,4 +93,26 @@ public interface IBrokerServer
 
     /// Processes a message from the upstream server
     void ProcessMessage(EncodedCommand command);
+}
+
+/// A broker must be able to send messages over each connection, both from the clients to the
+/// upstream, and the upstreams to the client. The contents of each message depend on the connection
+/// type:
+///
+/// - Client connections contain a line of ASCII text, including the trailing newline.
+/// - Server connections contain UTF-8 encoded JSON.
+public interface IBrokerConnection
+{
+    /// Determines how big an array should be rented from the shared ArrayPool for a message of the
+    /// given size (in bytes). Returns the total size of the buffer required.
+    public int MessageCapacity(int messageBytes);
+
+    /// Sends a message over the client's connection. The array is rented from the shared ArrayPool
+    /// using the size specified in MessageCapacity, it is up to the connection to return it once
+    /// the send has completed.
+    ///
+    /// If the capacity is larger than the message size, the message is stored after the extra
+    /// bytes. For example, if MessageCapacity(6) == 10 then the message is stored from bytes 4
+    /// through 9 and bytes 0 through 3 are left empty.
+    public void SendMessage(ArraySegment<byte> buffer, int messageBytes);
 }

@@ -5,8 +5,6 @@ namespace brokerlib.tests;
 
 public class TabServerTests : TestUtil
 {
-    private static Memory<byte> EMPTY = new Memory<byte>(new byte[0]);
-
     [SetUp]
     public void SetUp()
     {
@@ -18,7 +16,8 @@ public class TabServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyClientBroker();
-        var connection = new TabServer<DummyClientHandle>(manager, broker);
+        var connection = new TabServer<DummyClientHandle, DummySocketHandle>(manager, broker);
+        manager.DirectBind(connection);
 
         var message1 = Encoding.ASCII.GetBytes("HELLO");
         var message2 = Encoding.ASCII.GetBytes("\n");
@@ -28,7 +27,7 @@ public class TabServerTests : TestUtil
         manager.EnqueueReceive(new Memory<byte>(message2));
         manager.EnqueueReceive(new Memory<byte>(message3));
         manager.EnqueueReceive(new Memory<byte>(message4));
-        manager.EnqueueReceive(EMPTY);
+        manager.EnqueueEmpty();
 
         connection.OnConnected();
         Assert.AreEqual(0, broker.RegisteredClients.Count);
@@ -55,11 +54,12 @@ public class TabServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyClientBroker();
-        var connection = new TabServer<DummyClientHandle>(manager, broker);
+        var connection = new TabServer<DummyClientHandle, DummySocketHandle>(manager, broker);
+        manager.DirectBind(connection);
 
         var message = Encoding.ASCII.GetBytes("HELLO\ntest client\n");
         manager.EnqueueReceive(new Memory<byte>(message));
-        manager.EnqueueReceive(EMPTY);
+        manager.EnqueueEmpty();
 
         connection.OnConnected();
 
@@ -76,14 +76,15 @@ public class TabServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyClientBroker();
-        var connection = new TabServer<DummyClientHandle>(manager, broker);
+        var connection = new TabServer<DummyClientHandle, DummySocketHandle>(manager, broker);
+        manager.DirectBind(connection);
 
         var message = Encoding.ASCII.GetBytes("HELLO\ntest client\n");
         for (var i = 0; i < message.Length; i++)
         {
             manager.EnqueueReceive(new Memory<byte>(message, i, 1));
         }
-        manager.EnqueueReceive(EMPTY);
+        manager.EnqueueEmpty();
 
         connection.OnConnected();
         for (var i = 0; i < message.Length; i++)
@@ -109,11 +110,12 @@ public class TabServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyClientBroker();
-        var connection = new TabServer<DummyClientHandle>(manager, broker);
+        var connection = new TabServer<DummyClientHandle, DummySocketHandle>(manager, broker);
+        manager.DirectBind(connection);
 
         var message = Encoding.ASCII.GetBytes("HELLO\ntest client\nmessage 1\nmessage 2\nmessage 3\n");
         manager.EnqueueReceive(message);
-        manager.EnqueueReceive(EMPTY);
+        manager.EnqueueEmpty();
 
         connection.OnConnected();
         manager.Step();
@@ -137,7 +139,8 @@ public class TabServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyClientBroker();
-        var connection = new TabServer<DummyClientHandle>(manager, broker);
+        var connection = new TabServer<DummyClientHandle, DummySocketHandle>(manager, broker);
+        manager.DirectBind(connection);
 
         var message1 = Encoding.ASCII.GetBytes("HELLO\ntest client\n");
         var message2 = Encoding.ASCII.GetBytes("mess");
@@ -151,7 +154,7 @@ public class TabServerTests : TestUtil
         manager.EnqueueReceive(message4);
         manager.EnqueueReceive(message5);
         manager.EnqueueReceive(message6);
-        manager.EnqueueReceive(EMPTY);
+        manager.EnqueueEmpty();
 
         connection.OnConnected();
         manager.Step();

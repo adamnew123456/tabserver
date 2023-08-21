@@ -3,14 +3,15 @@ using System.Text;
 
 namespace brokerlib.tests;
 
-public class WebScoketServerTests : TestUtil
+public class WebSocketServerTests : TestUtil
 {
     [Test]
     public void AcceptMessage()
     {
         var manager = new DummyManager();
         var broker = new DummyServerBroker();
-        var server = new WebSocketServer(manager, broker);
+        var server = new WebSocketServer<DummySocketHandle>(manager, broker);
+        manager.DirectBind(server);
 
         var id = Guid.NewGuid().ToString();
         var message = "{\"id\": \"" + id + "\", \"line\": \"stuff and things\"}";
@@ -47,7 +48,8 @@ public class WebScoketServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyServerBroker();
-        var server = new WebSocketServer(manager, broker);
+        var server = new WebSocketServer<DummySocketHandle>(manager, broker);
+        manager.DirectBind(server);
 
         // Never actually sent, just a backstop to ensure there is a message in
         // the queue when Receive is called
@@ -79,7 +81,8 @@ public class WebScoketServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyServerBroker();
-        var server = new WebSocketServer(manager, broker);
+        var server = new WebSocketServer<DummySocketHandle>(manager, broker);
+        manager.DirectBind(server);
 
         var request = new WebSocketFrame()
         {
@@ -117,7 +120,8 @@ public class WebScoketServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyServerBroker();
-        var server = new WebSocketServer(manager, broker);
+        var server = new WebSocketServer<DummySocketHandle>(manager, broker);
+        manager.DirectBind(server);
 
         var request = new WebSocketFrame()
         {
@@ -152,7 +156,8 @@ public class WebScoketServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyServerBroker();
-        var server = new WebSocketServer(manager, broker);
+        var server = new WebSocketServer<DummySocketHandle>(manager, broker);
+        manager.DirectBind(server);
 
         var request = new WebSocketFrame()
         {
@@ -180,7 +185,8 @@ public class WebScoketServerTests : TestUtil
     {
         var manager = new DummyManager();
         var broker = new DummyServerBroker();
-        var server = new WebSocketServer(manager, broker);
+        var server = new WebSocketServer<DummySocketHandle>(manager, broker);
+        manager.DirectBind(server);
 
         var request = new WebSocketFrame()
         {

@@ -9,7 +9,9 @@ public class WebSocketHandshakeTests : TestUtil
     public void MinimalValidConnection()
     {
         var manager = new DummyManager();
-        var handshake = new WebSocketHandshake(manager);
+        var broker = new DummyServerBroker();
+        var handshake = new WebSocketHandshake<DummySocketHandle>(manager, broker);
+        manager.DirectBind(handshake);
 
         var request =
             "GET / HTTP/1.1\r\n" +
@@ -23,11 +25,12 @@ public class WebSocketHandshakeTests : TestUtil
         {
             manager.EnqueueReceive(chunk);
         }
+        manager.EnqueueEmpty();
 
         handshake.OnConnected();
-        while (handshake.Status == WebSocketHandshakeStatus.Pending) manager.Step();
+        while (manager.CanStep()) manager.Step();
 
-        Assert.AreEqual(WebSocketHandshakeStatus.Successful, handshake.Status);
+        Assert.IsTrue(manager.Handle.Socket is WebSocketServer<DummySocketHandle>);
         Assert.IsTrue(manager.AllDataReceived());
 
         var expectedReply =
@@ -42,7 +45,9 @@ public class WebSocketHandshakeTests : TestUtil
     public void MinimalValidConnectionOneByOne()
     {
         var manager = new DummyManager();
-        var handshake = new WebSocketHandshake(manager);
+        var broker = new DummyServerBroker();
+        var handshake = new WebSocketHandshake<DummySocketHandle>(manager, broker);
+        manager.DirectBind(handshake);
 
         var request =
             "GET / HTTP/1.1\r\n" +
@@ -56,11 +61,12 @@ public class WebSocketHandshakeTests : TestUtil
         {
             manager.EnqueueReceive(chunk);
         }
+        manager.EnqueueEmpty();
 
         handshake.OnConnected();
-        while (handshake.Status == WebSocketHandshakeStatus.Pending) manager.Step();
+        while (manager.CanStep()) manager.Step();
 
-        Assert.AreEqual(WebSocketHandshakeStatus.Successful, handshake.Status);
+        Assert.IsTrue(manager.Handle.Socket is WebSocketServer<DummySocketHandle>);
         Assert.IsTrue(manager.AllDataReceived());
 
         var expectedReply =
@@ -75,7 +81,9 @@ public class WebSocketHandshakeTests : TestUtil
     public void ConnectionWithExtraHeaders()
     {
         var manager = new DummyManager();
-        var handshake = new WebSocketHandshake(manager);
+        var broker = new DummyServerBroker();
+        var handshake = new WebSocketHandshake<DummySocketHandle>(manager, broker);
+        manager.DirectBind(handshake);
 
         var request =
             "GET / HTTP/1.1\r\n" +
@@ -101,11 +109,12 @@ public class WebSocketHandshakeTests : TestUtil
         {
             manager.EnqueueReceive(chunk);
         }
+        manager.EnqueueEmpty();
 
         handshake.OnConnected();
-        while (handshake.Status == WebSocketHandshakeStatus.Pending) manager.Step();
+        while (manager.CanStep()) manager.Step();
 
-        Assert.AreEqual(WebSocketHandshakeStatus.Successful, handshake.Status);
+        Assert.IsTrue(manager.Handle.Socket is WebSocketServer<DummySocketHandle>);
         Assert.IsTrue(manager.AllDataReceived());
 
         var expectedReply =

@@ -1,5 +1,6 @@
 // -*- mode: csharp; fill-column: 100 -*-
 using System.Buffers;
+using System.Net;
 using System.Text;
 
 public abstract class TestUtil
@@ -83,49 +84,81 @@ public enum ManagerEvents
 	Close,
 }
 
-public class DummyManager : ISocketManager
+public class DummySocketHandle
 {
-	private Queue<Memory<byte>> ReceiveQueue = new Queue<Memory<byte>>();
-	private MemoryStream Output = new MemoryStream();
-	private IManagedSocket? NextReceiveSocket;
-	private Memory<byte>? NextReceiveBuffer;
+	public IManagedSocket<DummySocketHandle>? Socket;
+	public Queue<Memory<byte>> ReceiveQueue = new Queue<Memory<byte>>();
+	public Memory<byte>? NextBuffer;
+	public MemoryStream Output = new MemoryStream();
+}
+
+public class DummyManager : ISocketManager<DummySocketHandle>
+{
+	private static readonly Memory<byte> EMPTY = new Memory<byte>(new byte[0]);
+	public DummySocketHandle Handle = new DummySocketHandle();
+	public bool RecvPending;
 
 	public void EnqueueReceive(Memory<byte> buffer)
 	{
-		ReceiveQueue.Enqueue(buffer);
+		Handle.ReceiveQueue.Enqueue(buffer);
+	}
+
+	public void EnqueueEmpty()
+	{
+		Handle.ReceiveQueue.Enqueue(EMPTY);
 	}
 
 	public byte[] RawOutput()
 	{
-		return Output.ToArray();
+		return Handle.Output.ToArray();
 	}
 
 	public string DecodeOutput()
 	{
-		return Encoding.UTF8.GetString(Output.ToArray());
+		return Encoding.UTF8.GetString(Handle.Output.ToArray());
 	}
 
 	public bool AllDataReceived()
 	{
-		return ReceiveQueue.Count == 0;
+		return Handle.ReceiveQueue.Count == 0;
+	}
+
+	public bool CanStep()
+	{
+		return Handle.ReceiveQueue.Count > 0;
+	}
+
+	public void DirectBind(IManagedSocket<DummySocketHandle> socket)
+	{
+		socket.ManagerHandle = Handle;
+		Handle.Socket = socket;
 	}
 
 	public void Step()
 	{
-		if (NextReceiveBuffer != null)
+		if (!RecvPending)
 		{
-			NextReceiveSocket.OnReceive(NextReceiveBuffer.Value);
+			throw new Exception("Cannot step a manager with no pending receives");
 		}
+
+		if (Handle.Socket == null) throw new Exception("No socket attached to handle");
+		if (Handle.NextBuffer == null) throw new Exception("No buffer attached to handle");
+		Handle.Socket.OnReceive(Handle.NextBuffer.Value);
 	}
 
-	public void Receive(IManagedSocket socket, Memory<byte> destination)
+	public void Bind(EndPoint address, Func<ConnectedEndPoints, IManagedSocket<DummySocketHandle>> factory)
 	{
-		if (ReceiveQueue.Count == 0)
+		// Unused in the tests - the socket is injected directly via the DirectBind operation
+	}
+
+	public void Receive(DummySocketHandle socket, Memory<byte> destination)
+	{
+		if (socket.ReceiveQueue.Count == 0)
 		{
 			throw new Exception("Receive: no data pending");
 		}
 
-		var buffer = ReceiveQueue.Dequeue();
+		var buffer = socket.ReceiveQueue.Dequeue();
 		if (buffer.Length > destination.Length)
 		{
 			throw new Exception($"Receive: {buffer.Length} byte buffer does not fit in {destination.Length} byte slice");
@@ -135,20 +168,28 @@ public class DummyManager : ISocketManager
 
 		// Don't call OnReceive directly because that could lead to a stack overflow if the
 		// number of receives is big enough
-		NextReceiveSocket = socket;
-		NextReceiveBuffer = destination.Slice(0, buffer.Length);
+		Handle.NextBuffer = destination.Slice(0, buffer.Length);
+		RecvPending = true;
 	}
 
-	public void SendAll(IManagedSocket socket, Memory<byte> source)
+	public void SendAll(DummySocketHandle socket, Memory<byte> source)
 	{
-		Output.Write(source.Span);
-		socket.OnSend();
+		if (socket.Socket == null) throw new Exception("No socket attached to handle");
+		socket.Output.Write(source.Span);
+		socket.Socket.OnSend();
 	}
 
-	public void Close(IManagedSocket socket)
+	public void Close(DummySocketHandle socket)
 	{
-		socket.OnClose();
+		if (socket.Socket == null) throw new Exception("No socket attached to handle");
+		socket.Socket.OnClose();
 	}
+
+    public void ChangeHandler(DummySocketHandle socket, IManagedSocket<DummySocketHandle> newSocket)
+    {
+		DirectBind(newSocket);
+		newSocket.OnConnected();
+    }
 }
 
 public class DummyServerBroker : IBrokerServer

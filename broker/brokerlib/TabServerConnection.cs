@@ -3,7 +3,7 @@ using System.Text;
 
 namespace brokerlib;
 
-public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDisposable
+public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHandleT>, IBrokerConnection, IDisposable
 {
     private enum HelloState
     {
@@ -18,10 +18,10 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
     private const int BUFFER_SIZE = 4096;
 
 	/// The manager that executes our async socket requests.
-	public ISocketManager Manager { get; private set; }
+	public ISocketManager<SocketHandleT> Manager { get; private set; }
 
-	/// The broker that handles client connections and forwards requests to the usptream connection.
-	private IBrokerClient<ClientHandle> Broker;
+    /// The broker that handles client connections and forwards requests to the usptream connection.
+    private IBrokerClient<BrokerHandleT> Broker;
 
     /// Storage used to buffer the current line of input from the server.
     private ReceiveBuffer ReceiveBuffer;
@@ -29,8 +29,11 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
     /// What next line we're expecting, if any. Used to capture the HELLO message.
     private HelloState State;
 
-    /// The unique handle for our connected client.
-    private ClientHandle? Handle;
+    /// The unique handle for our connected client inside the broker.
+    private BrokerHandleT? BrokerHandle;
+
+    /// The unique handle for our connected client inside the socket manager.
+    public SocketHandleT ManagerHandle { private get; set; }
 
     /// Decoder used to read ASCII bytes into strings
     private Decoder LineDecoder;
@@ -41,7 +44,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
     /// Tracks the buffers for pending messages.
     private Queue<ArraySegment<byte>> PendingSend;
 
-    public TabServer(ISocketManager manager, IBrokerClient<ClientHandle> broker)
+    public TabServer(ISocketManager<SocketHandleT> manager, IBrokerClient<BrokerHandleT> broker)
     {
         Manager = manager;
         Broker = broker;
@@ -65,7 +68,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
 
     public void OnConnected()
     {
-        Manager.Receive(this, ReceiveBuffer.WritableSlice());
+        Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
     }
 
     public void OnReceive(Memory<byte> destination)
@@ -89,7 +92,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
                     || buffer[4] != 'O'
                     || buffer[5] != '\n')
                 {
-                    Manager.Close(this);
+                    Manager.Close(ManagerHandle);
                     return;
                 }
 
@@ -113,7 +116,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
                                         out completed);
 
                     var client = new String(outputBuffer.Slice(0, charsWritten));
-                    Handle = Broker.RegisterClient(client);
+                    BrokerHandle = Broker.RegisterClient(client);
                     lineStart = i + 1;
                     State = HelloState.Forward;
                 }
@@ -136,7 +139,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
                                         out completed);
 
                     var message = new String(outputBuffer.Slice(0, charsWritten));
-                    Broker.ForwardToServer(Handle, message, true);
+                    Broker.ForwardToServer(BrokerHandle, message, true);
                     lineStart = i + 1;
                     State = HelloState.Forward;
                 }
@@ -152,7 +155,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
         {
             // Don't bother buffering this - there is no *strict* limit on the length of the HELLO
             // message, but in practice it will never be this long.
-            Manager.Close(this);
+            Manager.Close(ManagerHandle);
             return;
         }
 
@@ -172,7 +175,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
                                 out completed);
 
             var message = new String(outputBuffer.Slice(0, charsWritten));
-            Broker.ForwardToServer(Handle, message, false);
+            Broker.ForwardToServer(BrokerHandle, message, false);
             ReceiveBuffer.SaveUnread(buffer.Length);
         }
         else
@@ -180,7 +183,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
             ReceiveBuffer.SaveUnread(lineStart);
         }
 
-        Manager.Receive(this, ReceiveBuffer.WritableSlice());
+        Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
     }
 
     public void OnSend()
@@ -201,7 +204,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
             // Don't dequeue it yet, we have to keep the buffer alive until the async send
             // completes.
             var buffer = PendingSend.Peek();
-            Manager.SendAll(this, new Memory<byte>(buffer.Array, buffer.Offset, buffer.Count));
+            Manager.SendAll(ManagerHandle, new Memory<byte>(buffer.Array, buffer.Offset, buffer.Count));
         }
     }
 
@@ -209,7 +212,7 @@ public class TabServer<ClientHandle> : IManagedSocket, IBrokerConnection, IDispo
     {
         if (State == HelloState.Forward)
         {
-            Broker.UnregisterClient(Handle);
+            Broker.UnregisterClient(BrokerHandle);
         }
     }
 

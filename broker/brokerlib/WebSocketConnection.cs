@@ -6,22 +6,23 @@ using System.Text.Json;
 
 namespace brokerlib;
 
-public enum WebSocketHandshakeStatus
-{
-	/// The handshake hasn't received the client's full request yet
-	Pending,
-
-	/// The handshake request was valid and the success response has been sent
-	Successful,
-
-	/// The handshake request was invalid and the failure response has been sent
-	Failed,
-}
-
 /// Handles the initial handshake of the WebSocket session. Waits for an HTTP/1.1 GET, validates the
 /// required headers, and then transitions to the WebSocketMessageState.
-public class WebSocketHandshake : IManagedSocket
+public class WebSocketHandshake<SocketHandleT> : IManagedSocket<SocketHandleT>
 {
+	private enum HandshakeStatus
+	{
+		/// The handshake hasn't received the client's full request yet
+		Pending,
+
+		/// The handshake request was valid and the success response has been sent
+		Successful,
+
+		/// The handshake request was invalid and the failure response has been sent
+		Failed,
+	}
+
+
     private const int BUFFER_SIZE = 4096;
 
 	/// HTTP status codes for errors that occur when processing the request
@@ -31,10 +32,16 @@ public class WebSocketHandshake : IManagedSocket
 	private const int NOT_IMPLEMENTED = 501;
 
 	/// The manager that executes our async socket requests.
-	public ISocketManager Manager { get; private set; }
+	public ISocketManager<SocketHandleT> Manager { get; private set; }
 
-	/// Buffer used for storing data from the socket
-	private ReceiveBuffer ReceiveBuffer = new ReceiveBuffer(BUFFER_SIZE);
+	/// The broker to pass along to the main connection handler
+	public IBrokerServer Broker { private get; set; }
+
+	/// The handle we use to request operations from the manager.
+    public SocketHandleT ManagerHandle { private get; set; }
+
+    /// Buffer used for storing data from the socket
+    private ReceiveBuffer ReceiveBuffer = new ReceiveBuffer(BUFFER_SIZE);
 
 	/// Whether the request line has been read from the request.
 	private bool SeenRequestLine;
@@ -56,17 +63,18 @@ public class WebSocketHandshake : IManagedSocket
 
 	/// Whether the handshake has been accepted or not. This value has no meaning until a call to
 	/// ReadNextLine returns true.
-	public WebSocketHandshakeStatus Status {get; private set; }
+	private HandshakeStatus Status;
 
-	public WebSocketHandshake(ISocketManager manager)
+	public WebSocketHandshake(ISocketManager<SocketHandleT> manager, IBrokerServer broker)
 	{
 		Manager = manager;
-		Status = WebSocketHandshakeStatus.Pending;
+		Broker = broker;
+		Status = HandshakeStatus.Pending;
 	}
 
 	public void OnConnected()
 	{
-		Manager.Receive(this, ReceiveBuffer.WritableSlice());
+		Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
 	}
 
 	public void OnReceive(Memory<byte> destination)
@@ -102,17 +110,21 @@ public class WebSocketHandshake : IManagedSocket
 		// requests that contain data that's too big to fit in the buffer.
 		if (lineStart == 0 && ReceiveBuffer.IsFull)
 		{
-			Status = WebSocketHandshakeStatus.Failed;
+			Status = HandshakeStatus.Failed;
 			SendResponse(INVALID_REQUEST, "Line Too Long");
 			return;
 		}
 
 		ReceiveBuffer.SaveUnread(lineStart);
-		Manager.Receive(this, ReceiveBuffer.WritableSlice());
+		Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
 	}
 
 	public void OnSend()
 	{
+		if (Status == HandshakeStatus.Successful)
+		{
+			Manager.ChangeHandler(ManagerHandle, new WebSocketServer<SocketHandleT>(Manager, Broker));
+		}
 	}
 
 	public void OnClose()
@@ -124,7 +136,7 @@ public class WebSocketHandshake : IManagedSocket
 	private void SendResponse(int status = 0, string? details = null)
 	{
 		string message;
-		if (Status == WebSocketHandshakeStatus.Failed)
+		if (Status == HandshakeStatus.Failed)
 		{
 			message = $"HTTP/1.1 {status} {details ?? "Unknown"}\r\n";
 		}
@@ -135,7 +147,7 @@ public class WebSocketHandshake : IManagedSocket
 		}
 
 		var data = Encoding.UTF8.GetBytes(message);
-		Manager.SendAll(this, new Memory<byte>(data));
+		Manager.SendAll(ManagerHandle, new Memory<byte>(data));
 	}
 
 	/// Processes a single line from the socket and acts on it. Returns true if the request is done
@@ -149,21 +161,21 @@ public class WebSocketHandshake : IManagedSocket
 			var parts = lineString.Split(' ');
 			if (parts.Length != 3 || parts[2] != "HTTP/1.1")
 			{
-				Status = WebSocketHandshakeStatus.Failed;
+				Status = HandshakeStatus.Failed;
 				SendResponse(INVALID_REQUEST, "Not HTTP11 Request Line");
 				return true;
 			}
 
 			if (parts[0] != "GET")
 			{
-				Status = WebSocketHandshakeStatus.Failed;
+				Status = HandshakeStatus.Failed;
 				SendResponse(METHOD_NOT_ALLOWED, "Only GET Allowed");
 				return true;
 			}
 
 			if (parts[1] != "/")
 			{
-				Status = WebSocketHandshakeStatus.Failed;
+				Status = HandshakeStatus.Failed;
 				SendResponse(NOT_FOUND, "Only Root Path Allowed");
 				return true;
 			}
@@ -176,12 +188,12 @@ public class WebSocketHandshake : IManagedSocket
 			{
 				if (!SeenHostHeader || !SeenUpgradeHeader || !SeenConnectionHeader || WSKey == null || !SeenWSVersionHeader)
 				{
-					Status = WebSocketHandshakeStatus.Failed;
+					Status = HandshakeStatus.Failed;
 					SendResponse(INVALID_REQUEST, "Missing Header");
 				}
 				else
 				{
-					Status = WebSocketHandshakeStatus.Successful;
+					Status = HandshakeStatus.Successful;
 					SendResponse();
 				}
 
@@ -189,7 +201,7 @@ public class WebSocketHandshake : IManagedSocket
 			}
 			else if (line[0] == ' ' || line[0] == '\t')
 			{
-				Status = WebSocketHandshakeStatus.Failed;
+				Status = HandshakeStatus.Failed;
 				SendResponse(NOT_IMPLEMENTED, "Unsupported Header Continuation");
 				return true;
 			}
@@ -199,7 +211,7 @@ public class WebSocketHandshake : IManagedSocket
 				int colonIndex = lineString.IndexOf(':');
 				if (colonIndex == -1)
 				{
-					Status = WebSocketHandshakeStatus.Failed;
+					Status = HandshakeStatus.Failed;
 					SendResponse(INVALID_REQUEST, "Header Separator Not Found");
 					return true;
 				}
@@ -217,7 +229,7 @@ public class WebSocketHandshake : IManagedSocket
 					var value = lineString.Substring(colonIndex + 1).Trim();
 					if (!OptionInHeaderList(value, "websocket"))
 					{
-						Status = WebSocketHandshakeStatus.Failed;
+						Status = HandshakeStatus.Failed;
 						SendResponse(INVALID_REQUEST, "Upgrade must contain websocket");
 						return true;
 					}
@@ -228,7 +240,7 @@ public class WebSocketHandshake : IManagedSocket
 					var value = lineString.Substring(colonIndex + 1).Trim();
 					if (!OptionInHeaderList(value, "upgrade"))
 					{
-						Status = WebSocketHandshakeStatus.Failed;
+						Status = HandshakeStatus.Failed;
 						SendResponse(INVALID_REQUEST, "Connection must contain upgrade");
 						return true;
 					}
@@ -245,7 +257,7 @@ public class WebSocketHandshake : IManagedSocket
 					var value = lineString.Substring(colonIndex + 1).Trim();
 					if (!value.Equals("13"))
 					{
-						Status = WebSocketHandshakeStatus.Failed;
+						Status = HandshakeStatus.Failed;
 						SendResponse(INVALID_REQUEST, "WSVersion Must Be 13");
 						return true;
 					}
@@ -287,7 +299,7 @@ public class WebSocketHandshake : IManagedSocket
 
 /// Handles forwarding data between connected clients and the upstream server. Assumes the handshake
 /// has already been performed and that any data received is WebSocket frames.
-public class WebSocketServer : IManagedSocket, IBrokerConnection, IDisposable
+public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBrokerConnection, IDisposable
 {
 	private struct PendingMessage
 	{
@@ -309,10 +321,13 @@ public class WebSocketServer : IManagedSocket, IBrokerConnection, IDisposable
 	}
 
 	/// The manager that executes our async socket requests.
-	public ISocketManager Manager { get; private set; }
+	public ISocketManager<SocketHandleT> Manager { get; private set; }
 
-	/// The broker that handles client connections and processes upstream messages.
-	private IBrokerServer Broker;
+    /// The broker that handles client connections and processes upstream messages.
+    private IBrokerServer Broker;
+
+	/// The handle we use to communicate with the manager.
+    public SocketHandleT ManagerHandle { private get; set; }
 
 	/// The parser that decodes messages from the upstream server.
 	private WebSocketClientParser Parser;
@@ -331,7 +346,7 @@ public class WebSocketServer : IManagedSocket, IBrokerConnection, IDisposable
     /// Tracks the buffers for pending messages.
     private Queue<PendingMessage> PendingSend;
 
-	public WebSocketServer(ISocketManager manager, IBrokerServer broker)
+	public WebSocketServer(ISocketManager<SocketHandleT> manager, IBrokerServer broker)
 	{
 		Manager = manager;
 		Broker = broker;
@@ -355,7 +370,7 @@ public class WebSocketServer : IManagedSocket, IBrokerConnection, IDisposable
 	public void OnConnected()
 	{
 		Broker.UpstreamConnected();
-		Manager.Receive(this, FeedBuffer);
+		Manager.Receive(ManagerHandle, FeedBuffer);
 	}
 
 	public void OnReceive(Memory<byte> destination)
@@ -363,7 +378,7 @@ public class WebSocketServer : IManagedSocket, IBrokerConnection, IDisposable
 		Parser.Feed(destination.Length, ProcessUpstreamMessage);
 		if (!SendingClose)
 		{
-			Manager.Receive(this, FeedBuffer);
+			Manager.Receive(ManagerHandle, FeedBuffer);
 		}
 	}
 
@@ -371,7 +386,7 @@ public class WebSocketServer : IManagedSocket, IBrokerConnection, IDisposable
 	{
 		if (SendingClose)
 		{
-			Manager.Close(this);
+			Manager.Close(ManagerHandle);
 			return;
 		}
 
@@ -398,7 +413,7 @@ public class WebSocketServer : IManagedSocket, IBrokerConnection, IDisposable
 
 			var payload = MessageFrame.WriteHeaderTo(new Span<byte>(message.Buffer.Array));
 			MessageFrame.MaskPayloadInBuffer(payload);
-            Manager.SendAll(this, new Memory<byte>(message.Buffer.Array, message.Buffer.Offset, message.Buffer.Count));
+            Manager.SendAll(ManagerHandle, new Memory<byte>(message.Buffer.Array, message.Buffer.Offset, message.Buffer.Count));
 		}
 	}
 

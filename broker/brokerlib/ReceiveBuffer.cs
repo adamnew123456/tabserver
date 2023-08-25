@@ -29,16 +29,16 @@ public struct ReceiveBuffer : IDisposable
 
     /// Gets the slice that contains all readable data, including saved data
     /// from the last SaveUnread as well as any newly written data.
-    public Memory<byte> ReadableSlice(int bytesWritten)
+    public ArraySegment<byte> ReadableSlice(int bytesWritten)
     {
         WriteCursor += bytesWritten;
-        return new Memory<byte>(Buffer, 0, WriteCursor);
+        return new ArraySegment<byte>(Buffer, 0, WriteCursor);
     }
 
     /// Gets the slice that contains the unwritten portion of the buffer.
-    public Memory<byte> WritableSlice()
+    public ArraySegment<byte> WritableSlice()
     {
-        return new Memory<byte>(Buffer, WriteCursor, Buffer.Length - WriteCursor);
+        return new ArraySegment<byte>(Buffer, WriteCursor, Buffer.Length - WriteCursor);
     }
 
     /// Copies any unread data to the start of the buffer and marks the rest of

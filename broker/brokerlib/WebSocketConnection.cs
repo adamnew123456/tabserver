@@ -77,11 +77,11 @@ public class WebSocketHandshake<SocketHandleT> : IManagedSocket<SocketHandleT>
 		Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
 	}
 
-	public void OnReceive(Memory<byte> destination)
+	public void OnReceive(ArraySegment<byte> destination)
 	{
 		var foundReturn = false;
 		var lineStart = 0;
-		var buffer = ReceiveBuffer.ReadableSlice(destination.Length).Span;
+		var buffer = ReceiveBuffer.ReadableSlice(destination.Count).AsSpan();
 
 		for (var i = 0; i < buffer.Length; i++)
 		{
@@ -147,7 +147,7 @@ public class WebSocketHandshake<SocketHandleT> : IManagedSocket<SocketHandleT>
 		}
 
 		var data = Encoding.UTF8.GetBytes(message);
-		Manager.SendAll(ManagerHandle, new Memory<byte>(data));
+		Manager.SendAll(ManagerHandle, new ArraySegment<byte>(data));
 	}
 
 	/// Processes a single line from the socket and acts on it. Returns true if the request is done
@@ -333,7 +333,7 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 	private WebSocketClientParser Parser;
 
 	/// The buffer used for decoding upstream messages, borrowed from the parser.
-	private Memory<byte> FeedBuffer;
+	private ArraySegment<byte> FeedBuffer;
 
 	/// The frame used to build messages for sending upstream
 	private WebSocketFrame MessageFrame;
@@ -373,9 +373,9 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 		Manager.Receive(ManagerHandle, FeedBuffer);
 	}
 
-	public void OnReceive(Memory<byte> destination)
+	public void OnReceive(ArraySegment<byte> destination)
 	{
-		Parser.Feed(destination.Length, ProcessUpstreamMessage);
+		Parser.Feed(destination.Count, ProcessUpstreamMessage);
 		if (!SendingClose)
 		{
 			Manager.Receive(ManagerHandle, FeedBuffer);
@@ -413,7 +413,7 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 
 			var payload = MessageFrame.WriteHeaderTo(new Span<byte>(message.Buffer.Array));
 			MessageFrame.MaskPayloadInBuffer(payload);
-            Manager.SendAll(ManagerHandle, new Memory<byte>(message.Buffer.Array, message.Buffer.Offset, message.Buffer.Count));
+            Manager.SendAll(ManagerHandle, new ArraySegment<byte>(message.Buffer.Array, message.Buffer.Offset, message.Buffer.Count));
 		}
 	}
 

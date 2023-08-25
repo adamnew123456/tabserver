@@ -387,13 +387,13 @@ public sealed class WebSocketClientParser : IDisposable
 	/// Checks out a buffer from the parser's memory pool. This buffer is owned by the parser and
 	/// should only be used to fill data for the next Feed operation. Once the parser is disposed
 	/// the memory should no longer be used.
-	public Memory<byte> RentFeedBuffer()
+	public ArraySegment<byte> RentFeedBuffer()
 	{
 		if (FeedBuffer == null)
 		{
 			FeedBuffer = ArrayPool<byte>.Shared.Rent(FEED_BUFFER_SIZE);
 		}
-		return new Memory<byte>(FeedBuffer);
+		return new ArraySegment<byte>(FeedBuffer);
 	}
 
 	/// Cleans up any buffers we're holding for partially parsed frames.

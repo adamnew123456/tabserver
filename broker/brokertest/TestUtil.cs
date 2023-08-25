@@ -88,7 +88,7 @@ public class DummySocketHandle
 {
 	public IManagedSocket<DummySocketHandle>? Socket;
 	public Queue<Memory<byte>> ReceiveQueue = new Queue<Memory<byte>>();
-	public Memory<byte>? NextBuffer;
+	public ArraySegment<byte>? NextBuffer;
 	public MemoryStream Output = new MemoryStream();
 }
 
@@ -146,12 +146,12 @@ public class DummyManager : ISocketManager<DummySocketHandle>
 		Handle.Socket.OnReceive(Handle.NextBuffer.Value);
 	}
 
-	public void Bind(EndPoint address, Func<ConnectedEndPoints, IManagedSocket<DummySocketHandle>> factory)
+	public void Bind(EndPoint address, ManagedSocketFactory<DummySocketHandle> factory)
 	{
 		// Unused in the tests - the socket is injected directly via the DirectBind operation
 	}
 
-	public void Receive(DummySocketHandle socket, Memory<byte> destination)
+	public void Receive(DummySocketHandle socket, ArraySegment<byte> destination)
 	{
 		if (socket.ReceiveQueue.Count == 0)
 		{
@@ -159,9 +159,9 @@ public class DummyManager : ISocketManager<DummySocketHandle>
 		}
 
 		var buffer = socket.ReceiveQueue.Dequeue();
-		if (buffer.Length > destination.Length)
+		if (buffer.Length > destination.Count)
 		{
-			throw new Exception($"Receive: {buffer.Length} byte buffer does not fit in {destination.Length} byte slice");
+			throw new Exception($"Receive: {buffer.Length} byte buffer does not fit in {destination.Count} byte slice");
 		}
 
 		buffer.CopyTo(destination);
@@ -172,10 +172,10 @@ public class DummyManager : ISocketManager<DummySocketHandle>
 		RecvPending = true;
 	}
 
-	public void SendAll(DummySocketHandle socket, Memory<byte> source)
+	public void SendAll(DummySocketHandle socket, ArraySegment<byte> source)
 	{
 		if (socket.Socket == null) throw new Exception("No socket attached to handle");
-		socket.Output.Write(source.Span);
+		socket.Output.Write(source.AsSpan());
 		socket.Socket.OnSend();
 	}
 

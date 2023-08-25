@@ -35,7 +35,7 @@ public class WebSocketClientTests : TestUtil
     private void SendArrayToParser(WebSocketClientParser parser, byte[] buffer, Action<WebSocketMessage> callback, int chunkSize = -1)
 	{
 		var feedBuffer = parser.RentFeedBuffer();
-		if (chunkSize <= 0 || chunkSize > feedBuffer.Length) chunkSize = feedBuffer.Length;
+		if (chunkSize <= 0 || chunkSize > feedBuffer.Count) chunkSize = feedBuffer.Count;
 
 		foreach (var slice in ChunkBuffer(buffer, chunkSize))
 		{

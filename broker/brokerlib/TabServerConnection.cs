@@ -71,9 +71,9 @@ public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHand
         Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
     }
 
-    public void OnReceive(Memory<byte> destination)
+    public void OnReceive(ArraySegment<byte> destination)
     {
-        var buffer = ReceiveBuffer.ReadableSlice(destination.Length).Span;
+        var buffer = ReceiveBuffer.ReadableSlice(destination.Count).AsSpan();
         var lineStart = 0;
         var i = 0;
 
@@ -204,7 +204,7 @@ public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHand
             // Don't dequeue it yet, we have to keep the buffer alive until the async send
             // completes.
             var buffer = PendingSend.Peek();
-            Manager.SendAll(ManagerHandle, new Memory<byte>(buffer.Array, buffer.Offset, buffer.Count));
+            Manager.SendAll(ManagerHandle, new ArraySegment<byte>(buffer.Array, buffer.Offset, buffer.Count));
         }
     }
 

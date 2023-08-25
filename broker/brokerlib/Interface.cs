@@ -4,7 +4,7 @@ using System.Net;
 namespace brokerlib;
 
 /// A pair of endpoints, indicating the local and remote ends of a connected socket.
-public struct ConnectedEndPoints
+public class ConnectedEndPoints
 {
     /// The endpoint on the local host
     public EndPoint Local { get; }
@@ -17,7 +17,16 @@ public struct ConnectedEndPoints
         Local = local;
         Remote = remote;
     }
+
+    public override string ToString()
+    {
+        return $"<connection: ${Local} - ${Remote}>";
+    }
 }
+
+/// Creates a socket wrapper when a client connects to the server. May return null to indicate that
+/// the connection isn't acceptable and must be closed immediately.
+public delegate IManagedSocket<SocketHandle>? ManagedSocketFactory<SocketHandle>(ISocketManager<SocketHandle> manager, ConnectedEndPoints connection);
 
 /// Manages the async requests for each managed socket, configuring their event handlers and calling
 /// their callbacks any time an event occurs.
@@ -26,16 +35,20 @@ public interface ISocketManager<SocketHandle>
     /// Binds a server socket and starts listening on it immediately. When a connection is received,
     /// the local and remote endpoint are given to a factory which returns a socket to use for the
     /// connection.
-    void Bind(EndPoint address, Func<ConnectedEndPoints, IManagedSocket<SocketHandle>> factory);
+    ///
+    /// Note that binds are permanent - once the socket is listening, there is no way to get it to
+    /// stop. The only thing you can do is have the factory refuse connections on the socket. But
+    /// the socket will still be listening.
+    void Bind(EndPoint address, ManagedSocketFactory<SocketHandle> factory);
 
 	/// Schedules an asynchronous receive into the destination buffer. Calls OnReceive when the data
 	/// is available.
-	void Receive(SocketHandle socket, Memory<byte> destination);
+	void Receive(SocketHandle socket, ArraySegment<byte> destination);
 
 	/// Schedules an asynchronous receive into the destination buffer. Calls OnSend when the data
 	/// has been sent. Note that this may require multiple sends, if the buffer is to big to be sent
 	/// in one shot.
-	void SendAll(SocketHandle socket, Memory<byte> source);
+	void SendAll(SocketHandle socket, ArraySegment<byte> source);
 
 	/// Closes the socket immediately and executes OnClose.
 	void Close(SocketHandle socket);
@@ -63,7 +76,7 @@ public interface IManagedSocket<SocketHandle>
 	/// Called by the socket manager when a Receive request completes. Note that the destination is
 	/// sliced to fit the amount of data that is actually received. However, this destination has
 	/// the same backing array as the one given to receive and no copy is performed.
-	void OnReceive(Memory<byte> destination);
+	void OnReceive(ArraySegment<byte> destination);
 
 	/// Called by the socket manager when a SendAll request completes.
 	void OnSend();

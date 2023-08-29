@@ -39,7 +39,7 @@ public interface ISocketManager<SocketHandle>
     /// Note that binds are permanent - once the socket is listening, there is no way to get it to
     /// stop. The only thing you can do is have the factory refuse connections on the socket. But
     /// the socket will still be listening.
-    void Bind(EndPoint address, ManagedSocketFactory<SocketHandle> factory);
+    EndPoint Bind(EndPoint address, ManagedSocketFactory<SocketHandle> factory);
 
 	/// Schedules an asynchronous receive into the destination buffer. Calls OnReceive when the data
 	/// is available.

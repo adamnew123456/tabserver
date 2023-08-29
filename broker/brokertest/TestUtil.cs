@@ -146,9 +146,10 @@ public class DummyManager : ISocketManager<DummySocketHandle>
 		Handle.Socket.OnReceive(Handle.NextBuffer.Value);
 	}
 
-	public void Bind(EndPoint address, ManagedSocketFactory<DummySocketHandle> factory)
+	public EndPoint Bind(EndPoint address, ManagedSocketFactory<DummySocketHandle> factory)
 	{
 		// Unused in the tests - the socket is injected directly via the DirectBind operation
+		return address;
 	}
 
 	public void Receive(DummySocketHandle socket, ArraySegment<byte> destination)

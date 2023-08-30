@@ -41,14 +41,14 @@ class EchoSocket<SocketT> : IManagedSocket<SocketT>
 
 public class AsyncSocketManagerTests : TestUtil
 {
-    private IManagedSocket<AsyncSocketHandle> Factory(ISocketManager<AsyncSocketHandle> manager, ConnectedEndPoints endpoints)
+    private IManagedSocket<AsyncSocketHandle>? EchoFactory(ISocketManager<AsyncSocketHandle> manager, ConnectedEndPoints endpoints)
     {
         return new EchoSocket<AsyncSocketHandle>(manager);
     }
 
-    private void Trace(string message)
+    private IManagedSocket<AsyncSocketHandle>? RejectFactory(ISocketManager<AsyncSocketHandle> manager, ConnectedEndPoints endpoints)
     {
-        File.AppendAllText("/dev/tty", message + "\n");
+        return null;
     }
 
     [Test]
@@ -60,7 +60,7 @@ public class AsyncSocketManagerTests : TestUtil
         var manager = new AsyncSocketManager();
         try
         {
-            var address = manager.Bind(new IPEndPoint(IPAddress.Loopback, 0), Factory);
+            var address = manager.Bind(new IPEndPoint(IPAddress.Loopback, 0), EchoFactory);
 
             var client = new Socket(SocketType.Stream, ProtocolType.Tcp);
             client.NoDelay = true;
@@ -83,6 +83,30 @@ public class AsyncSocketManagerTests : TestUtil
 
             Assert.AreEqual(sent, received);
             Assert.AreEqual(sendBuffer, receiveBuffer);
+        }
+        finally
+        {
+            manager.CloseAll();
+        }
+    }
+
+    [Test]
+    public void RefuseConnection()
+    {
+        var manager = new AsyncSocketManager();
+        try
+        {
+            var address = manager.Bind(new IPEndPoint(IPAddress.Loopback, 0), RejectFactory);
+
+            var client = new Socket(SocketType.Stream, ProtocolType.Tcp);
+            client.Connect(address);
+
+            // It will connect but then the server will hang up, detect this by a receive
+            byte[] buffer = new byte[1];
+            var received = client.Receive(buffer);
+            Assert.AreEqual(0, received);
+
+            client.Close();
         }
         finally
         {

@@ -849,4 +849,9 @@ public class WebSocketFrame
 		}
 		return buffer;
 	}
+
+	public override string ToString()
+	{
+		return $"Frame<IsLastFragment={IsLastFragment}, OpCode={OpCode}, Mask={Mask}, Payload={Payload}>";
+	}
 }

@@ -122,13 +122,8 @@ public class TabServerTests : TestUtil
 
         Assert.AreEqual(1, broker.RegisteredClients.Count);
         var client = broker.RegisteredClients.First();
-        Assert.AreEqual(6, client.Fragments.Count);
-        Assert.AreEqual("message 1", client.Fragments[0]);
-        Assert.AreEqual("\n", client.Fragments[1]);
-        Assert.AreEqual("message 2", client.Fragments[2]);
-        Assert.AreEqual("\n", client.Fragments[3]);
-        Assert.AreEqual("message 3", client.Fragments[4]);
-        Assert.AreEqual("\n", client.Fragments[5]);
+        Assert.AreEqual(1, client.Fragments.Count);
+        Assert.AreEqual("message 1\nmessage 2\nmessage 3\n", client.Fragments[0]);
 
         connection.OnClose();
         Assert.AreEqual(0, broker.RegisteredClients.Count);
@@ -164,17 +159,12 @@ public class TabServerTests : TestUtil
         for (var i = 0; i < 5; i++) manager.Step();
 
         var client = broker.RegisteredClients.First();
-        Assert.AreEqual(10, client.Fragments.Count);
+        Assert.AreEqual(5, client.Fragments.Count);
         Assert.AreEqual("mess", client.Fragments[0]);
         Assert.AreEqual("age 1", client.Fragments[1]);
-        Assert.AreEqual("", client.Fragments[2]);
-        Assert.AreEqual("\n", client.Fragments[3]);
-        Assert.AreEqual("mes", client.Fragments[4]);
-        Assert.AreEqual("sage", client.Fragments[5]);
-        Assert.AreEqual(" 2", client.Fragments[6]);
-        Assert.AreEqual("\n", client.Fragments[7]);
-        Assert.AreEqual("message 3", client.Fragments[8]);
-        Assert.AreEqual("\n", client.Fragments[9]);
+        Assert.AreEqual("\nmes", client.Fragments[2]);
+        Assert.AreEqual("sage", client.Fragments[3]);
+        Assert.AreEqual(" 2\nmessage 3\n", client.Fragments[4]);
 
         connection.OnClose();
         Assert.AreEqual(0, broker.RegisteredClients.Count);

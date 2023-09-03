@@ -405,39 +405,45 @@ information.
 
 ### Encoding
 
-For ease of use with browser-based clients, the broker's control protocol uses
-JSON passed over a websocket connection. It has only three types of messages.
+For ease of use with browser-based clients, the broker's control protocol goes
+over a WebSocket connection. It is a binary protocol using little-endian for
+multi-byte values.
 
-The first tells the upstream server that a particular client has connected. The
-broker identifies each client by a UUID, and the connection message sends that
-id along with whatever message the client provided in its `HELLO`:
+It has four types of messages. All messages start with a byte indicating the
+type of data that follows:
 
-```json
-{
-  "id": "6eae2f2f-c2b2-49ee-ac3a-348299a13162",
-  "hello": "SQLite In-Memory Database"
-}
-```
+- 0x0, indicating the HELLO command
+- 0x1, indicating the GOODBYE command
+- 0x2, indicating the SEND command
 
-The second message tells the upstream server that a client has disconnected:
-
-```json
-{
-  "id": "6eae2f2f-c2b2-49ee-ac3a-348299a13162",
-  "goodbye": true
-}
-```
-
-Both of these types of messages can only be sent by the broker to the upstream
-server. The last message type can be sent by either the broker or the upstream
-server. Only one line of text (without the trailing `\n`) is permitted in the
-line field.
+The HELLO command is sent by the broker to the upstream, to inform the upstream
+that a new client has connected. Note that this restricts the maximum length of
+the HELLO message to 65535 bytes - if the client tries to send a longer one, the 
+broker must immediately disconnect it.
 
 ```
-{
-  "id": "6eae2f2f-c2b2-49ee-ac3a-348299a13162",
-  "line": "EXECUTE"
-}
+| op (1) | id (4)        | name-length (2) | name (var) |
+| 0      | <32-bit int>  | <16-bit uint>   | <ASCII>    |
+```
+
+The GOODBYE command is sent by the broker to the upstream, to inform the
+upstream that an existing client has disconnected.
+
+```
+| op (1) | id (4)        |
+| 1      | <32-bit int>  |
+```
+
+The SEND command can be sent by either the broker or the upstream:
+
+- If sent by the broker, it tells the upstream that a client has sent some data.
+- If sent by the upstream, it tells the broker to send the data to the client.
+
+In both cases, the message is structured like this:
+
+```
+| op (1) | id (4)        | content-length (2) | content (var) |
+| 2      | <32-bit int>  | <16-bit uint>      | <ASCII>       |
 ```
 
 ### Connection Management
@@ -450,15 +456,3 @@ The upstream server is mandatory:
   
 - If the upstream server disconnects, all client connections are immediately
   terminated.
-
-### Limitations
-
-To simplify the implementation of the broker, no message is  permitted where the
-size of the encoded JSON is greater than `0x7fffffff` (the max value of
-`int32`). If any client sends a message which exceeds that limit after being
-encapsulated, or the upstream server sends a message exceeding that limit, the
-connection that originated the message is automatically closed.
-
-The limitations under connection management apply here too. If a user sends a
-query that's longer than 2 GiB after base64 encoding, the broker kills the
-upstream server connection along with all connected clients.

@@ -2,13 +2,12 @@
 using System.Security.Cryptography;
 using System.IO;
 using System.Text;
-using System.Text.Json;
 
 namespace brokerlib;
 
 /// Handles the initial handshake of the WebSocket session. Waits for an HTTP/1.1 GET, validates the
 /// required headers, and then transitions to the WebSocketMessageState.
-public class WebSocketHandshake<SocketHandleT> : IManagedSocket<SocketHandleT>
+public class WebSocketHandshake<SocketHandleT> : ManagedSocketBase<SocketHandleT>
 {
 	private enum HandshakeStatus
 	{
@@ -31,14 +30,8 @@ public class WebSocketHandshake<SocketHandleT> : IManagedSocket<SocketHandleT>
 	private const int METHOD_NOT_ALLOWED = 405;
 	private const int NOT_IMPLEMENTED = 501;
 
-	/// The manager that executes our async socket requests.
-	public ISocketManager<SocketHandleT> Manager { get; private set; }
-
 	/// The broker to pass along to the main connection handler
 	public IBrokerServer Broker { private get; set; }
-
-	/// The handle we use to request operations from the manager.
-    public SocketHandleT ManagerHandle { private get; set; }
 
     /// Buffer used for storing data from the socket
     private ReceiveBuffer ReceiveBuffer = new ReceiveBuffer(BUFFER_SIZE);
@@ -72,12 +65,12 @@ public class WebSocketHandshake<SocketHandleT> : IManagedSocket<SocketHandleT>
 		Status = HandshakeStatus.Pending;
 	}
 
-	public void OnConnected()
+	public override void OnConnected()
 	{
 		Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
 	}
 
-	public void OnReceive(ArraySegment<byte> destination)
+	public override void OnReceive(ArraySegment<byte> destination)
 	{
 		var foundReturn = false;
 		var lineStart = 0;
@@ -119,7 +112,7 @@ public class WebSocketHandshake<SocketHandleT> : IManagedSocket<SocketHandleT>
 		Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
 	}
 
-	public void OnSend()
+	public override void OnSend()
 	{
 		if (Status == HandshakeStatus.Successful)
 		{
@@ -127,7 +120,7 @@ public class WebSocketHandshake<SocketHandleT> : IManagedSocket<SocketHandleT>
 		}
 	}
 
-	public void OnClose()
+	public override void OnClose()
 	{
 	}
 
@@ -299,35 +292,22 @@ public class WebSocketHandshake<SocketHandleT> : IManagedSocket<SocketHandleT>
 
 /// Handles forwarding data between connected clients and the upstream server. Assumes the handshake
 /// has already been performed and that any data received is WebSocket frames.
-public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBrokerConnection, IDisposable
+public class WebSocketServer<SocketHandleT> : ManagedSocketBase<SocketHandleT>, IBrokerConnection, IDisposable
 {
 	private struct PendingMessage
 	{
 		/// The full buffer passed to SendMessage, including the space for the WebSocket header.
-		public ArraySegment<byte> Buffer;
+		public ArraySegment<byte> Buffer { get; set; }
 
 		/// The size of the input message without any WebSocket data.
-		public int DataSize;
+		public int DataSize { get; set; }
 
 		/// The type of message being sent
-		public MessageType OpCode;
-
-		public PendingMessage(ArraySegment<byte> buffer, int dataSize, MessageType opcode)
-		{
-			Buffer = buffer;
-			DataSize = dataSize;
-			OpCode = opcode;
-		}
+		public MessageType OpCode { get; set; }
 	}
-
-	/// The manager that executes our async socket requests.
-	public ISocketManager<SocketHandleT> Manager { get; private set; }
 
     /// The broker that handles client connections and processes upstream messages.
     private IBrokerServer Broker;
-
-	/// The handle we use to communicate with the manager.
-    public SocketHandleT ManagerHandle { private get; set; }
 
 	/// The parser that decodes messages from the upstream server.
 	private WebSocketClientParser Parser;
@@ -367,13 +347,13 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 		GC.SuppressFinalize(this);
 	}
 
-	public void OnConnected()
+	public override void OnConnected()
 	{
-		Broker.UpstreamConnected();
+		Broker.UpstreamConnected(this);
 		Manager.Receive(ManagerHandle, FeedBuffer);
 	}
 
-	public void OnReceive(ArraySegment<byte> destination)
+	public override void OnReceive(ArraySegment<byte> destination)
 	{
 		Parser.Feed(destination.Count, ProcessUpstreamMessage);
 		if (!SendingClose)
@@ -382,7 +362,7 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 		}
 	}
 
-	public void OnSend()
+	public override void OnSend()
 	{
 		if (SendingClose)
 		{
@@ -390,42 +370,48 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 			return;
 		}
 
-        if (PendingSend.Count > 0)
-        {
-            var lastSent = PendingSend.Dequeue();
-            ArrayPool<byte>.Shared.Return(lastSent.Buffer.Array);
-        }
+		lock (PendingSend)
+		{
+			if (PendingSend.Count > 0)
+			{
+				var lastSent = PendingSend.Dequeue();
+				ArrayPool<byte>.Shared.Return(lastSent.Buffer.Array);
+			}
+		}
 
-		SendPendingMessage();
+        SendPendingMessage();
+	}
+
+	public override void OnClose()
+	{
+		Broker.UpstreamDisconnected();
 	}
 
 	private void SendPendingMessage()
 	{
-		if (PendingSend.Count > 0)
+		lock (PendingSend)
 		{
-            var message = PendingSend.Dequeue();
-			SendingClose = message.OpCode == MessageType.Close;
+			if (PendingSend.Count > 0)
+			{
+				var message = PendingSend.Dequeue();
+				SendingClose = message.OpCode == MessageType.Close;
 
-			MessageFrame.IsLastFragment = true;
-			MessageFrame.OpCode = message.OpCode;
-			MessageFrame.Mask = null;
-			MessageFrame.Payload = message.DataSize;
+				MessageFrame.IsLastFragment = true;
+				MessageFrame.OpCode = message.OpCode;
+				MessageFrame.Mask = null;
+				MessageFrame.Payload = message.DataSize;
 
-			var payload = MessageFrame.WriteHeaderTo(new Span<byte>(message.Buffer.Array));
-			MessageFrame.MaskPayloadInBuffer(payload);
-            Manager.SendAll(ManagerHandle, new ArraySegment<byte>(message.Buffer.Array, message.Buffer.Offset, message.Buffer.Count));
+				var payload = MessageFrame.WriteHeaderTo(new ArraySegment<byte>(message.Buffer.Array, message.Buffer.Offset, message.Buffer.Count));
+				MessageFrame.MaskPayloadInBuffer(payload);
+				Manager.SendAll(ManagerHandle, new ArraySegment<byte>(message.Buffer.Array, message.Buffer.Offset, message.Buffer.Count));
+			}
 		}
-	}
-
-	public void OnClose()
-	{
-		Broker.UpstreamDisconnected();
 	}
 
 	public int MessageCapacity(int messageBytes)
 	{
 		MessageFrame.IsLastFragment = true;
-		MessageFrame.OpCode = MessageType.Text;
+		MessageFrame.OpCode = MessageType.Binary;
 		MessageFrame.Mask = null;
 		MessageFrame.Payload = messageBytes;
 		return MessageFrame.RequiredCapacity();
@@ -435,13 +421,26 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 	{
 		if (SendingClose) return;
 
-		PendingSend.Enqueue(new PendingMessage(buffer, messageBytes, MessageType.Text));
-        if (PendingSend.Count == 1)
-        {
-            // OnSend will continue pumping the queue as long as it is not empty, but we need to
-            // prime it if it was.
-            SendPendingMessage();
-        }
+		lock (PendingSend)
+		{
+			PendingSend.Enqueue(new PendingMessage()
+			{
+				Buffer = buffer,
+				DataSize = messageBytes,
+				OpCode = MessageType.Binary
+			});
+			if (PendingSend.Count == 1)
+			{
+				// OnSend will continue pumping the queue as long as it is not empty, but we need to
+				// prime it if it was.
+				SendPendingMessage();
+			}
+		}
+	}
+
+	public override void Close()
+	{
+		SendClose();
 	}
 
 	private void ProcessUpstreamMessage(WebSocketMessage message)
@@ -450,10 +449,12 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 
 		switch (message.Type)
 		{
-		case MessageType.Text:
-			var command = JsonSerializer.Deserialize<EncodedCommand>(message.Text);
-			if (command == null) return;
-			Broker.ProcessMessage(command);
+		case MessageType.Binary:
+			var command = BrokerCommand.Decode(message.Payload);
+			if (command is SendBrokerCommand send)
+			{
+				Broker.ForwardToClient(send.Id, send.Command);
+			}
 			break;
 
 		case MessageType.Ping:
@@ -479,11 +480,19 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 		payload.CopyTo(payloadSpan);
 
 		var bufferSegment = new ArraySegment<byte>(buffer, 0, capacity);
-		PendingSend.Enqueue(new PendingMessage(bufferSegment, payload.Length, MessageType.Pong));
-        if (PendingSend.Count == 1)
-        {
-            SendPendingMessage();
-        }
+		lock (PendingSend)
+		{
+			PendingSend.Enqueue(new PendingMessage()
+			{
+				Buffer = bufferSegment,
+				DataSize = payload.Length,
+				OpCode = MessageType.Pong
+			});
+			if (PendingSend.Count == 1)
+			{
+				SendPendingMessage();
+			}
+		}
 	}
 
 	private void SendClose()
@@ -496,10 +505,18 @@ public class WebSocketServer<SocketHandleT> : IManagedSocket<SocketHandleT>, IBr
 
 		var buffer = ArrayPool<byte>.Shared.Rent(capacity);
 		var bufferSegment = new ArraySegment<byte>(buffer, 0, capacity);
-		PendingSend.Enqueue(new PendingMessage(bufferSegment, 0, MessageType.Close));
-        if (PendingSend.Count == 1)
-        {
-            SendPendingMessage();
-        }
+		lock (PendingSend)
+		{
+			PendingSend.Enqueue(new PendingMessage()
+			{
+				Buffer = bufferSegment,
+				DataSize = 0,
+				OpCode = MessageType.Close
+			});
+			if (PendingSend.Count == 1)
+			{
+				SendPendingMessage();
+			}
+		}
 	}
 }

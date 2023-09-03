@@ -1,266 +1,535 @@
 // -*- mode: csharp; fill-column: 100 -*-
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
-using System.Text.Json.Serialization;
+using System.Text;
+using System.Threading;
 
 namespace brokerlib;
 
-public class EncodedCommand : IEquatable<EncodedCommand>
+public abstract class BrokerCommand : IEquatable<BrokerCommand>
 {
-    [JsonPropertyName("id")]
-    public string? Id { get; set; }
+    protected const int HELLO_COMMAND = 0;
+    protected const int GOODBYE_COMMAND = 1;
+    protected const int SEND_COMMAND = 2;
 
-    [JsonPropertyName("line")]
-    public string? Command { get; set; }
-
-    public bool Equals(EncodedCommand? other)
+    public static BrokerCommand Decode(Span<byte> buffer)
     {
-        if (other == null) return false;
-        return this.Id == other.Id && other.Command == this.Command;
-    }
-
-    public override string ToString()
-    {
-        return $"EncodedCommand<from={Id}, message={Command}>";
-    }
-}
-
-public class AsyncSocketHandle
-{
-    internal Socket Connection;
-    internal SocketAsyncEventArgs Event;
-    internal EventHandler<SocketAsyncEventArgs> Callback;
-    internal IManagedSocket<AsyncSocketHandle> Socket;
-    internal int SendBufferOffset;
-    internal int SendBufferLength;
-
-    internal AsyncSocketHandle(Socket connection,
-                               IManagedSocket<AsyncSocketHandle> socket,
-                               EventHandler<SocketAsyncEventArgs> callback)
-    {
-        Connection = connection;
-        Socket = socket;
-        Callback = callback;
-        Event = new SocketAsyncEventArgs();
-
-        Event.Completed += callback;
-        Event.UserToken = this;
-    }
-
-    /// Invokes the server socket's callback when data is available.
-    internal void ReceiveAsync(ArraySegment<byte> buffer)
-    {
-        Event.SetBuffer(buffer.Array, buffer.Offset, buffer.Count);
-
-        var pending = Connection.ReceiveAsync(Event);
-        if (!pending)
+        if (buffer.Length == 0)
         {
-            Callback(null, Event);
+            throw new InvalidDataException("Command buffer is empty");
+        }
+
+        var opcode = buffer[0];
+
+        switch (opcode)
+        {
+            case HELLO_COMMAND:
+            case SEND_COMMAND:
+                {
+                    // Minimum: opcode (1), ID (4), content (2 + data)
+                    if (buffer.Length < 7)
+                    {
+                        throw new InvalidDataException($"Command buffer is not large enough. Minimum is 7 bytes.");
+                    }
+
+                    var bodyLength = BitConverter.ToUInt16(buffer.Slice(5));
+
+                    if (buffer.Length < 7 + bodyLength)
+                    {
+                        throw new InvalidDataException($"Command buffer is not large enough. Minimum is {7 + bodyLength} bytes.");
+                    }
+
+                    var id = BitConverter.ToInt32(buffer.Slice(1));
+                    var body = buffer.Slice(7, bodyLength).ToArray();
+
+                    if (opcode == HELLO_COMMAND)
+                    {
+                        return new HelloBrokerCommand()
+                        {
+                            Id = id,
+                            Name = new ArraySegment<byte>(body),
+                        };
+                    }
+                    else
+                    {
+                        return new SendBrokerCommand()
+                        {
+                            Id = id,
+                            Command = new ArraySegment<byte>(body),
+                        };
+                    }
+                }
+            case GOODBYE_COMMAND:
+                {
+                    // Minimum: opcode (1), ID (4)
+                    if (buffer.Length < 5)
+                    {
+                        throw new InvalidDataException($"Command buffer is not large enough. Minimum is 5 bytes.");
+                    }
+
+                    var id = BitConverter.ToInt32(buffer.Slice(1));
+                    return new GoodbyeBrokerCommand()
+                    {
+                        Id = id,
+                    };
+                }
+            default:
+                throw new InvalidDataException($"Unexpected operation with code {opcode:x}");
         }
     }
 
-    /// Invokes the server socket's callback when data is available.
-    internal void SendAsync(ArraySegment<byte> buffer)
+    protected bool BufferEquals(ArraySegment<byte> a, ArraySegment<byte> b)
     {
-        SendBufferOffset = buffer.Offset;
-        SendBufferLength = buffer.Count;
-        Event.SetBuffer(buffer.Array, buffer.Offset, buffer.Count);
-
-        var pending = Connection.SendAsync(Event);
-        if (!pending)
+        if (a.Count != b.Count) return false;
+        for (var i = 0; i < a.Count; i++)
         {
-            Callback(null, Event);
+            if (a[i] != b[i]) return false;
         }
-    }
-
-    /// Checks if any more data must be sent from the send buffer and sends it asynchronously.
-    /// Returns true if another send was triggered and false otherwise.
-    internal bool ContinueSending()
-    {
-        SendBufferLength -= Event.BytesTransferred;
-        if (SendBufferLength == 0) return false;
-
-        SendBufferOffset += Event.BytesTransferred;
-        SendAsync(new ArraySegment<byte>(Event.Buffer, SendBufferOffset, SendBufferLength));
         return true;
     }
 
-    /// Closes the socket
-    internal void Close()
+    public abstract int EncodedSize();
+    public abstract void EncodeTo(ArraySegment<byte> buffer);
+    public abstract bool Equals(BrokerCommand? command);
+}
+
+public class HelloBrokerCommand : BrokerCommand
+{
+    public int Id { get; set; }
+    public ArraySegment<byte> Name { get; set; }
+
+    public override int EncodedSize()
+    {
+        return 7 + Name.Count;
+    }
+
+    public override void EncodeTo(ArraySegment<byte> buffer)
+    {
+        buffer[0] = HELLO_COMMAND;
+        BitConverter.TryWriteBytes(buffer.Slice(1), Id);
+        BitConverter.TryWriteBytes(buffer.Slice(5), (ushort)Name.Count);
+        Name.CopyTo(buffer.Slice(7));
+    }
+
+    public override bool Equals(BrokerCommand? command)
+    {
+        if (command is HelloBrokerCommand hello)
+        {
+            return this.Id == hello.Id && BufferEquals(this.Name, hello.Name);
+        }
+        return false;
+    }
+}
+
+public class GoodbyeBrokerCommand : BrokerCommand
+{
+    public int Id { get; set; }
+
+    public override int EncodedSize()
+    {
+        return 5;
+    }
+
+    public override void EncodeTo(ArraySegment<byte> buffer)
+    {
+        buffer[0] = GOODBYE_COMMAND;
+        BitConverter.TryWriteBytes(buffer.Slice(1), Id);
+    }
+
+    public override bool Equals(BrokerCommand? command)
+    {
+        if (command is GoodbyeBrokerCommand goodbye)
+        {
+            return this.Id == goodbye.Id;
+        }
+        return false;
+    }
+}
+
+public class SendBrokerCommand : BrokerCommand
+{
+    public int Id { get; set; }
+    public ArraySegment<byte> Command { get; set; }
+
+    public override int EncodedSize()
+    {
+        return 7 + Command.Count;
+    }
+
+    public override void EncodeTo(ArraySegment<byte> buffer)
+    {
+        buffer[0] = SEND_COMMAND;
+        BitConverter.TryWriteBytes(buffer.Slice(1), Id);
+        BitConverter.TryWriteBytes(buffer.Slice(5), (ushort)Command.Count);
+        Command.CopyTo(buffer.Slice(7));
+    }
+
+    public override bool Equals(BrokerCommand? command)
+    {
+        if (command is SendBrokerCommand send)
+        {
+            return this.Id == send.Id && BufferEquals(this.Command, send.Command);
+        }
+        return false;
+    }
+}
+
+public abstract class BrokerEvent
+{
+}
+
+public class StopBroker : BrokerEvent
+{
+    public static readonly StopBroker Instance = new StopBroker();
+    private StopBroker() { }
+}
+
+public class UpstreamConnected : BrokerEvent
+{
+    public BrokerHandle Handle { get; set; }
+}
+
+public class UpstreamDisconnected : BrokerEvent
+{
+    public static readonly UpstreamDisconnected Instance = new UpstreamDisconnected();
+    private UpstreamDisconnected() { }
+}
+
+public class ClientConnected : BrokerEvent
+{
+    public BrokerHandle Client { get; set; }
+    public ArraySegment<byte> Name { get; set; }
+}
+
+public class ClientDisconnected : BrokerEvent
+{
+    public BrokerHandle Client { get; set; }
+}
+
+public class ForwardToClient : BrokerEvent
+{
+    public int DestinationClient { get; set; }
+    public ArraySegment<byte> Message { get; set; }
+}
+
+public class ForwardToUpstream : BrokerEvent
+{
+    public BrokerHandle SourceClient { get; set; }
+    public ArraySegment<byte> Message { get; set; }
+}
+
+public class BrokerHandle : IDisposable
+{
+    private static int IdGenerator = 0;
+    internal int Id;
+    internal IBrokerConnection Connection;
+    internal ArraySegment<byte> MessageBuffer;
+
+    public BrokerHandle(IBrokerConnection connection)
+    {
+        Id = Interlocked.Increment(ref IdGenerator);
+        Connection = connection;
+        MessageBuffer = ArraySegment<byte>.Empty;
+    }
+
+    public ArraySegment<byte> PrepareSend(int size)
+    {
+        var totalSize = Connection.MessageCapacity(size);
+        var buffer = ArrayPool<byte>.Shared.Rent(totalSize);
+        MessageBuffer = new ArraySegment<byte>(buffer, 0, totalSize);
+        return new ArraySegment<byte>(buffer, totalSize - size, size);
+    }
+
+    public void Send(int size)
+    {
+        Connection.SendMessage(MessageBuffer, size);
+        MessageBuffer = ArraySegment<byte>.Empty;
+    }
+
+    public void Close()
     {
         Connection.Close();
-        Socket.OnClose();
     }
 
     public void Dispose()
     {
-        Event.Dispose();
         GC.SuppressFinalize(this);
-    }
-}
-
-internal class AsyncServerSocket
-{
-    // NOTE: While the SocketAsyncEventArgs in this object are disposable, we deliberately do not
-    // implement Dispose on the class because there's no situation where we want to clean this up
-    // and continue doing other things. Client connections come and go but the server is bound for
-    // the entire lifetime of the program.
-
-    internal Socket Listener;
-    internal SocketAsyncEventArgs Event;
-    internal EventHandler<SocketAsyncEventArgs> Callback;
-    internal ManagedSocketFactory<AsyncSocketHandle> Factory;
-
-    internal AsyncServerSocket(Socket listener,
-                               ManagedSocketFactory<AsyncSocketHandle> factory,
-                               EventHandler<SocketAsyncEventArgs> callback)
-    {
-        Listener = listener;
-        Event = new SocketAsyncEventArgs();
-        Factory = factory;
-        Callback = callback;
-
-        Event.Completed += callback;
-        Event.UserToken = this;
-    }
-
-    /// Invokes the server socket's callback when a client connects
-    internal void AcceptAsync()
-    {
-        Event.AcceptSocket = null;
-        var pending = Listener.AcceptAsync(Event);
-        if (!pending)
+        if (MessageBuffer.Count > 0)
         {
-            Callback(null, Event);
+            ArrayPool<byte>.Shared.Return(MessageBuffer.Array);
         }
     }
 }
 
-public class AsyncSocketManager : ISocketManager<AsyncSocketHandle>
+public class BrokerEventDispatcher
 {
-    private HashSet<Socket> ServerSockets = new HashSet<Socket>();
-    private HashSet<Socket> ClientSockets = new HashSet<Socket>();
-
-    /// Processes successful and failed async accept requests on any AsyncServerSocket
-    private void ServerCallback(object? sender, SocketAsyncEventArgs evt)
+    private enum UpstreamState
     {
-        var serverSock = (AsyncServerSocket) evt.UserToken;
-        if (evt.SocketError != SocketError.Success)
-        {
-            string endpoint = null;
-            try
-            {
-                endpoint = serverSock.Listener.LocalEndPoint.ToString();
-            }
-            catch (Exception err)
-            {
-                endpoint = "<unknown>";
-            }
-            Console.WriteLine($"[ACCEPT] Error: {endpoint} cannot accept connection, {evt.SocketError}");
-
-            if (evt.SocketError == SocketError.OperationAborted) return;
-        }
-        else
-        {
-            var clientSock = evt.AcceptSocket;
-            var endpoints = new ConnectedEndPoints(clientSock.LocalEndPoint, clientSock.RemoteEndPoint);
-            var managedSock = serverSock.Factory(this, endpoints);
-            if (managedSock == null)
-            {
-                Console.WriteLine($"[ACCEPT] Error: {endpoints} refused connection");
-                clientSock.Close();
-            }
-            else
-            {
-                ClientSockets.Add(clientSock);
-                var handle = new AsyncSocketHandle(clientSock, managedSock, ClientCallback);
-                handle.Socket.ManagerHandle = handle;
-                managedSock.OnConnected();
-            }
-        }
-
-        serverSock.AcceptAsync();
+        NoConnection,
+        WaitingForHandshake,
+        Connected,
     }
 
-    private void ClientCallback(object? sender, SocketAsyncEventArgs evt)
+    private class StartArgs
     {
-        var clientSock = (AsyncSocketHandle) evt.UserToken;
-        if (evt.SocketError != SocketError.Success)
+        public AsyncSocketManager Manager { get; set; }
+        public EndPoint Upstream { get; set; }
+        public EndPoint Client { get; set; }
+    }
+
+    private AutoResetEvent EventWaiter;
+    private ConcurrentQueue<BrokerEvent> Events;
+    private UpstreamState State;
+    private ManagedSocketBase<AsyncSocketHandle>? UpstreamSocket;
+    private BrokerHandle? UpstreamBroker;
+    private Dictionary<int, BrokerHandle> Clients;
+    private AsyncSocketManager? Manager;
+    private BrokerServerEvents ServerAdapter;
+    private BrokerClientEvents ClientAdapter;
+
+    public BrokerEventDispatcher()
+    {
+        EventWaiter = new AutoResetEvent(false);
+        Events = new ConcurrentQueue<BrokerEvent>();
+        State = UpstreamState.NoConnection;
+        UpstreamBroker = null;
+        Clients = new Dictionary<int, BrokerHandle>();
+        ServerAdapter = new BrokerServerEvents(this);
+        ClientAdapter = new BrokerClientEvents(this);
+    }
+
+    private ManagedSocketBase<AsyncSocketHandle>? OnUpstreamConnected(ISocketManager<AsyncSocketHandle> manager, ConnectedEndPoints connection)
+    {
+        if (State != UpstreamState.NoConnection) return null;
+        State = UpstreamState.WaitingForHandshake;
+        UpstreamSocket = new WebSocketHandshake<AsyncSocketHandle>(manager, ServerAdapter);
+        return UpstreamSocket;
+    }
+
+    private ManagedSocketBase<AsyncSocketHandle>? OnClientConnected(ISocketManager<AsyncSocketHandle> manager, ConnectedEndPoints connection)
+    {
+        if (State != UpstreamState.Connected) return null;
+        return new TabServer<BrokerHandle, AsyncSocketHandle>(manager, ClientAdapter);
+    }
+
+    public Thread StartThread(AsyncSocketManager manager, EndPoint upstreamEndpoint, EndPoint clientEndpoint)
+    {
+        var thread = new Thread(StartThreadAdapter);
+        thread.Start(new StartArgs()
         {
-            var localEndpoint = clientSock.Connection.LocalEndPoint;
-            var remoteEndpoint = clientSock.Connection.RemoteEndPoint;
-            Console.WriteLine($"[ACCEPT] Error: Aborting {localEndpoint} - {remoteEndpoint}, ${evt.SocketError}");
-            clientSock.Close();
-        }
-        else if (evt.LastOperation == SocketAsyncOperation.Receive)
+            Manager = manager,
+            Upstream = upstreamEndpoint,
+            Client = clientEndpoint,
+        });
+        return thread;
+    }
+
+    private void StartThreadAdapter(object? args)
+    {
+        if (args is StartArgs start)
         {
-            if (evt.BytesTransferred == 0)
-            {
-                var localEndpoint = clientSock.Connection.LocalEndPoint;
-                var remoteEndpoint = clientSock.Connection.RemoteEndPoint;
-                Console.WriteLine($"[ACCEPT] Error: Closing {localEndpoint} - {remoteEndpoint}, remote end hung up");
-                clientSock.Close();
-            }
-            else
-            {
-                var segment = new ArraySegment<byte>(evt.Buffer, 0, evt.BytesTransferred);
-                clientSock.Socket.OnReceive(segment);
-            }
-        }
-        else if (evt.LastOperation == SocketAsyncOperation.Send)
-        {
-            if (!clientSock.ContinueSending())
-            {
-                clientSock.Socket.OnSend();
-            }
+            Start(start.Manager, start.Upstream, start.Client);
         }
     }
 
-    public EndPoint Bind(EndPoint address, ManagedSocketFactory<AsyncSocketHandle> factory)
+    public void Start(AsyncSocketManager manager, EndPoint upstreamEndpoint, EndPoint clientEndpoint)
     {
-        var sock = new Socket(SocketType.Stream, ProtocolType.Tcp);
-        sock.Bind(address);
-        sock.Listen();
-        var bound = sock.LocalEndPoint;
-        ServerSockets.Add(sock);
+        Manager = manager;
+        Manager.Bind(upstreamEndpoint, OnUpstreamConnected);
+        Manager.Bind(clientEndpoint, OnClientConnected);
 
-        var serverSock = new AsyncServerSocket(sock, factory, ServerCallback);
-        serverSock.AcceptAsync();
-        return bound;
-    }
-
-    public void ChangeHandler(AsyncSocketHandle socket, IManagedSocket<AsyncSocketHandle> newSocket)
-    {
-        socket.Socket = newSocket;
-        newSocket.ManagerHandle = socket;
-        newSocket.OnConnected();
-    }
-
-    public void Receive(AsyncSocketHandle socket, ArraySegment<byte> destination)
-    {
-        socket.ReceiveAsync(destination);
-    }
-
-    public void SendAll(AsyncSocketHandle socket, ArraySegment<byte> source)
-    {
-        socket.SendAsync(source);
-    }
-
-    public void Close(AsyncSocketHandle socket)
-    {
-        socket.Close();
-    }
-
-    public void CloseAll()
-    {
-        foreach (var sock in ServerSockets)
+        BrokerEvent? evt = null;
+        while (true)
         {
-            sock.Close();
+            EventWaiter.WaitOne();
+            if (!Events.TryDequeue(out evt)) continue;
+
+            if (evt is StopBroker)
+            {
+                CloseAll();
+                break;
+            }
+            else if (evt is UpstreamConnected upstreamConnected)
+            {
+                State = UpstreamState.Connected;
+                UpstreamBroker = upstreamConnected.Handle;
+            }
+            else if (evt is UpstreamDisconnected)
+            {
+                State = UpstreamState.NoConnection;
+                UpstreamSocket = null;
+                foreach (var client in Clients.Values)
+                {
+                    client.Close();
+                }
+                Clients.Clear();
+            }
+            else if (evt is ClientConnected connected)
+            {
+                OnClientConnected(connected);
+            }
+            else if (evt is ClientDisconnected disconnected)
+            {
+                OnClientDisconnected(disconnected);
+            }
+            else if (evt is ForwardToClient toClient)
+            {
+                SendToClient(toClient);
+            }
+            else if (evt is ForwardToUpstream toUpstream)
+            {
+                SendToUpstream(toUpstream);
+            }
+        }
+    }
+
+    public void PostEvent(BrokerEvent evt)
+    {
+        Events.Enqueue(evt);
+        EventWaiter.Set();
+    }
+
+    private void OnClientConnected(ClientConnected evt)
+    {
+        // Possible if the client sent the HELLO at the same time as the upstream was disconnecting.
+        // In this case the client has already been closed during the UpstreamDisconnected event,
+        // just make sure not to send the message to the upstream that no longer exists.
+        if (State != UpstreamState.Connected) return;
+
+        Clients[evt.Client.Id] = evt.Client;
+        SendMessageToUpstream(new HelloBrokerCommand()
+        {
+            Id = evt.Client.Id,
+            Name = evt.Name,
+        });
+    }
+
+    private void OnClientDisconnected(ClientDisconnected evt)
+    {
+        if (State != UpstreamState.Connected) return;
+
+        Clients[evt.Client.Id] = evt.Client;
+        SendMessageToUpstream(new GoodbyeBrokerCommand()
+        {
+            Id = evt.Client.Id,
+        });
+    }
+
+    private void SendToUpstream(ForwardToUpstream toUpstream)
+    {
+        if (State != UpstreamState.Connected) return;
+
+        SendMessageToUpstream(new SendBrokerCommand()
+        {
+            Id = toUpstream.SourceClient.Id,
+            Command = toUpstream.Message,
+        });
+    }
+
+    private void SendToClient(ForwardToClient toClient)
+    {
+        BrokerHandle client;
+        if (!Clients.TryGetValue(toClient.DestinationClient, out client)) return;
+
+        var size = toClient.Message.Count;
+        var buffer = client.PrepareSend(size);
+        toClient.Message.CopyTo(buffer);
+        client.Send(size);
+    }
+
+    private void SendMessageToUpstream(BrokerCommand command)
+    {
+        var size = command.EncodedSize();
+        var buffer = UpstreamBroker.PrepareSend(size);
+        command.EncodeTo(buffer);
+        UpstreamBroker.Send(size);
+    }
+
+    private void CloseAll()
+    {
+        if (State == UpstreamState.WaitingForHandshake)
+        {
+            UpstreamSocket.Close();
+        }
+        else if (State == UpstreamState.Connected)
+        {
+            UpstreamBroker.Close();
         }
 
-        foreach (var sock in ClientSockets)
+        foreach (var client in Clients.Values)
         {
-            sock.Close();
+            client.Close();
         }
+    }
+}
+
+public class BrokerServerEvents : IBrokerServer
+{
+    private BrokerEventDispatcher Dispatcher;
+
+    public BrokerServerEvents(BrokerEventDispatcher dispatcher)
+    {
+        Dispatcher = dispatcher;
+    }
+
+    public void UpstreamConnected(IBrokerConnection connection)
+    {
+        Dispatcher.PostEvent(new brokerlib.UpstreamConnected()
+        {
+            Handle = new BrokerHandle(connection),
+        });
+    }
+
+    public void UpstreamDisconnected()
+    {
+        Dispatcher.PostEvent(brokerlib.UpstreamDisconnected.Instance);
+    }
+
+    public void ForwardToClient(int client, ArraySegment<byte> message)
+    {
+        Dispatcher.PostEvent(new ForwardToClient()
+        {
+            DestinationClient = client,
+            Message = message,
+        });
+    }
+}
+
+public class BrokerClientEvents : IBrokerClient<BrokerHandle>
+{
+    private BrokerEventDispatcher Dispatcher;
+
+    public BrokerClientEvents(BrokerEventDispatcher dispatcher)
+    {
+        Dispatcher = dispatcher;
+    }
+
+    public BrokerHandle RegisterClient(IBrokerConnection connection, ArraySegment<byte> name)
+    {
+        var client = new BrokerHandle(connection);
+        Dispatcher.PostEvent(new ClientConnected()
+        {
+            Client = client,
+            Name = name,
+        });
+        return client;
+    }
+
+    public void UnregisterClient(BrokerHandle client)
+    {
+        Dispatcher.PostEvent(new ClientDisconnected()
+        {
+            Client = client,
+        });
+    }
+
+    public void ForwardToServer(BrokerHandle client, ArraySegment<byte> message)
+    {
+        Dispatcher.PostEvent(new ForwardToUpstream()
+        {
+            SourceClient = client,
+            Message = message,
+        });
     }
 }

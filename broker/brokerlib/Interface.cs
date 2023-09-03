@@ -26,7 +26,7 @@ public class ConnectedEndPoints
 
 /// Creates a socket wrapper when a client connects to the server. May return null to indicate that
 /// the connection isn't acceptable and must be closed immediately.
-public delegate IManagedSocket<SocketHandle>? ManagedSocketFactory<SocketHandle>(ISocketManager<SocketHandle> manager, ConnectedEndPoints connection);
+public delegate ManagedSocketBase<SocketHandle>? ManagedSocketFactory<SocketHandle>(ISocketManager<SocketHandle> manager, ConnectedEndPoints connection);
 
 /// Manages the async requests for each managed socket, configuring their event handlers and calling
 /// their callbacks any time an event occurs.
@@ -59,31 +59,37 @@ public interface ISocketManager<SocketHandle>
     /// Note that this also updates the callbacks of any in-flight receive or send events to use the
     /// new socket. Be sure that the new socket can cope with these new events, or otherwise make
     /// sure that there aren't any outstanding async requests.
-    void ChangeHandler(SocketHandle socket, IManagedSocket<SocketHandle> newSocket);
+    void ChangeHandler(SocketHandle socket, ManagedSocketBase<SocketHandle> newSocket);
 }
 
-public interface IManagedSocket<SocketHandle>
+public abstract class ManagedSocketBase<SocketHandle>
 {
     /// The socket manager that the socket uses to request operations.
-	ISocketManager<SocketHandle> Manager { get; }
+	public ISocketManager<SocketHandle> Manager { get; protected set; }
 
     /// The handle assigned to this socket by the manager.
-    SocketHandle ManagerHandle { set; }
+    public SocketHandle ManagerHandle { protected get; set; }
 
 	/// Called by the socket manager when the connection is opened.
-	void OnConnected();
+	public abstract void OnConnected();
 
 	/// Called by the socket manager when a Receive request completes. Note that the destination is
 	/// sliced to fit the amount of data that is actually received. However, this destination has
 	/// the same backing array as the one given to receive and no copy is performed.
-	void OnReceive(ArraySegment<byte> destination);
+	public abstract void OnReceive(ArraySegment<byte> destination);
 
 	/// Called by the socket manager when a SendAll request completes.
-	void OnSend();
+	public abstract void OnSend();
 
 	/// Called by the socket manager when a Close request completes, or the socket is forcibly
 	/// closed by the peer or the operating system.
-	void OnClose();
+	public abstract void OnClose();
+
+    /// Allows the socket to be closed from the outside.
+    public virtual void Close()
+    {
+        Manager.Close(ManagerHandle);
+    }
 }
 
 /// The portion of the broker that's exposed to TabServer client connections. This end of the broker
@@ -91,17 +97,17 @@ public interface IManagedSocket<SocketHandle>
 public interface IBrokerClient<ClientHandle>
 {
     /// Registers a new client, returning a handle that identifies the client to the upstream
-    /// server.
-    ClientHandle RegisterClient(string name);
+    /// server. The name must be rented from the shared ArrayPool. The broker will return the
+    /// name once it has sent the client connected message to the upstream server.
+    ClientHandle RegisterClient(IBrokerConnection connection, ArraySegment<byte> name);
 
-    /// Unregisters a client
+    /// Unregisters a client.
     void UnregisterClient(ClientHandle client);
 
-    /// Forwards a fragment of a message from the indicated client to the upstream server. flush is
-    /// used to control whether the message is complete: if it's false then the fragment is added to
-    /// the broker's buffer for this client, if it's true then the fragment (and any buffered data)
-    /// are sent to the upstream.
-    void ForwardToServer(ClientHandle client, string message, bool flush);
+    /// Forwards a fragment of a message from the indicated client to the upstream server.  The
+    /// message must be rented from the shared ArrayPool. The broker will return the name once it
+    /// has forwarded the message to the upstream server.
+    void ForwardToServer(ClientHandle client, ArraySegment<byte> message);
 }
 
 /// The portion of the broker that's exposed to the upstream server. This end is used to notify the
@@ -111,14 +117,15 @@ public interface IBrokerServer
 {
     /// Indicates that the connection to the upstream server has been established. Client
     /// connections are now allowed.
-    void UpstreamConnected();
+    void UpstreamConnected(IBrokerConnection connection);
 
 	/// Indicates that the connection to the upstream server has been lost. Must terminate all
 	/// active client connections.
 	void UpstreamDisconnected();
 
-    /// Processes a message from the upstream server
-    void ProcessMessage(EncodedCommand command);
+    /// Sends data to a specific client. The mesesage must be rented from the shared ArrayPool. The
+    /// broker will return it once it has forwarded the message to the client.
+    void ForwardToClient(int client, ArraySegment<byte> message);
 }
 
 /// A broker must be able to send messages over each connection, both from the clients to the
@@ -141,4 +148,8 @@ public interface IBrokerConnection
     /// bytes. For example, if MessageCapacity(6) == 10 then the message is stored from bytes 4
     /// through 9 and bytes 0 through 3 are left empty.
     public void SendMessage(ArraySegment<byte> buffer, int messageBytes);
+
+    /// Closes the connection. The broker does this to client connections when the server connection
+    /// hangs up.
+    public void Close();
 }

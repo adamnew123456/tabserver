@@ -3,7 +3,7 @@ using System.Text;
 
 namespace brokerlib;
 
-public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHandleT>, IBrokerConnection, IDisposable
+public class TabServer<BrokerHandleT, SocketHandleT> : ManagedSocketBase<SocketHandleT>, IBrokerConnection, IDisposable
 {
     private enum HelloState
     {
@@ -15,10 +15,8 @@ public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHand
         Forward,
     }
 
-    private const int BUFFER_SIZE = 4096;
-
-	/// The manager that executes our async socket requests.
-	public ISocketManager<SocketHandleT> Manager { get; private set; }
+    /// The maximum size of a HELLO message
+    private const int BUFFER_SIZE = UInt16.MaxValue;
 
     /// The broker that handles client connections and forwards requests to the usptream connection.
     private IBrokerClient<BrokerHandleT> Broker;
@@ -31,9 +29,6 @@ public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHand
 
     /// The unique handle for our connected client inside the broker.
     private BrokerHandleT? BrokerHandle;
-
-    /// The unique handle for our connected client inside the socket manager.
-    public SocketHandleT ManagerHandle { private get; set; }
 
     /// Decoder used to read ASCII bytes into strings
     private Decoder LineDecoder;
@@ -66,23 +61,23 @@ public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHand
 		GC.SuppressFinalize(this);
 	}
 
-    public void OnConnected()
+    public override void OnConnected()
     {
         Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
     }
 
-    public void OnReceive(ArraySegment<byte> destination)
+    public override void OnReceive(ArraySegment<byte> destination)
     {
-        var buffer = ReceiveBuffer.ReadableSlice(destination.Count).AsSpan();
+        var buffer = ReceiveBuffer.ReadableSlice(destination.Count);
         var lineStart = 0;
         var i = 0;
 
-        while (i < buffer.Length)
+        while (i < buffer.Count && State != HelloState.Forward)
         {
             switch (State)
             {
             case HelloState.AwaitHello:
-                if (buffer.Length < 6) goto doneReading;
+                if (buffer.Count < 6) goto doneReading;
                 // HELLO is always the first thing the client transmits, so we can assume it'll be
                 // at the start of the buffer
                 if (buffer[0] != 'H'
@@ -104,42 +99,8 @@ public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHand
             case HelloState.AwaitIntro:
                 if (buffer[i] == '\n')
                 {
-                    var bytesRead = 0;
-                    var charsWritten = 0;
-                    var completed = false;
-                    var outputBuffer = new Span<char>(LineBuffer);
-                    LineDecoder.Convert(buffer.Slice(lineStart, i - lineStart),
-                                        outputBuffer,
-                                        true,
-                                        out bytesRead,
-                                        out charsWritten,
-                                        out completed);
-
-                    var client = new String(outputBuffer.Slice(0, charsWritten));
-                    BrokerHandle = Broker.RegisterClient(client);
-                    lineStart = i + 1;
-                    State = HelloState.Forward;
-                }
-
-                i++;
-                break;
-
-            case HelloState.Forward:
-                if (buffer[i] == '\n')
-                {
-                    var bytesRead = 0;
-                    var charsWritten = 0;
-                    var completed = false;
-                    var outputBuffer = new Span<char>(LineBuffer);
-                    LineDecoder.Convert(buffer.Slice(lineStart, i - lineStart),
-                                        outputBuffer,
-                                        true,
-                                        out bytesRead,
-                                        out charsWritten,
-                                        out completed);
-
-                    var message = new String(outputBuffer.Slice(0, charsWritten));
-                    Broker.ForwardToServer(BrokerHandle, message, true);
+                    var client = buffer.Slice(lineStart, i - lineStart);
+                    BrokerHandle = Broker.RegisterClient(this, client);
                     lineStart = i + 1;
                     State = HelloState.Forward;
                 }
@@ -153,30 +114,17 @@ public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHand
         if ((State == HelloState.AwaitHello || State == HelloState.AwaitIntro)
             && ReceiveBuffer.IsFull)
         {
-            // Don't bother buffering this - there is no *strict* limit on the length of the HELLO
-            // message, but in practice it will never be this long.
+            // Don't bother buffering this - the HELLO message won't fit into our broker message
+            // frames, so we can't send it to the upstream.
             Manager.Close(ManagerHandle);
             return;
         }
 
-        if (State == HelloState.Forward && lineStart < buffer.Length)
+        if (State == HelloState.Forward && lineStart < buffer.Count)
         {
-            var fragmentLength = buffer.Length - lineStart;
-
-            var bytesRead = 0;
-            var charsWritten = 0;
-            var completed = false;
-            var outputBuffer = new Span<char>(LineBuffer);
-            LineDecoder.Convert(buffer.Slice(lineStart, fragmentLength),
-                                outputBuffer,
-                                true,
-                                out bytesRead,
-                                out charsWritten,
-                                out completed);
-
-            var message = new String(outputBuffer.Slice(0, charsWritten));
-            Broker.ForwardToServer(BrokerHandle, message, false);
-            ReceiveBuffer.SaveUnread(buffer.Length);
+            var message = buffer.Slice(lineStart, buffer.Count - lineStart);
+            Broker.ForwardToServer(BrokerHandle, message);
+            ReceiveBuffer.SaveUnread(buffer.Count);
         }
         else
         {
@@ -186,29 +134,21 @@ public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHand
         Manager.Receive(ManagerHandle, ReceiveBuffer.WritableSlice());
     }
 
-    public void OnSend()
+    public override void OnSend()
     {
-        if (PendingSend.Count > 0)
+        lock (PendingSend)
         {
-            var lastSent = PendingSend.Dequeue();
-            ArrayPool<byte>.Shared.Return(lastSent.Array);
+            if (PendingSend.Count > 0)
+            {
+                var lastSent = PendingSend.Dequeue();
+                ArrayPool<byte>.Shared.Return(lastSent.Array);
+            }
         }
 
         SendPendingMessage();
     }
 
-    private void SendPendingMessage()
-    {
-        if (PendingSend.Count > 0)
-        {
-            // Don't dequeue it yet, we have to keep the buffer alive until the async send
-            // completes.
-            var buffer = PendingSend.Peek();
-            Manager.SendAll(ManagerHandle, new ArraySegment<byte>(buffer.Array, buffer.Offset, buffer.Count));
-        }
-    }
-
-    public void OnClose()
+    public override void OnClose()
     {
         if (State == HelloState.Forward)
         {
@@ -231,4 +171,18 @@ public class TabServer<BrokerHandleT, SocketHandleT> : IManagedSocket<SocketHand
             OnSend();
         }
 	}
+
+    private void SendPendingMessage()
+    {
+        lock (PendingSend)
+        {
+            if (PendingSend.Count > 0)
+            {
+                // Don't dequeue it yet, we have to keep the buffer alive until the async send
+                // completes.
+                var buffer = PendingSend.Peek();
+                Manager.SendAll(ManagerHandle, new ArraySegment<byte>(buffer.Array, buffer.Offset, buffer.Count));
+            }
+        }
+    }
 }

@@ -13,14 +13,19 @@ public class WebSocketServerTests : TestUtil
         var server = new WebSocketServer<DummySocketHandle>(manager, broker);
         manager.DirectBind(server);
 
-        var id = Guid.NewGuid().ToString();
-        var message = "{\"id\": \"" + id + "\", \"line\": \"stuff and things\"}";
-        var messageBytes = Encoding.UTF8.GetBytes(message);
+        var id = 1;
+        var command = "stuff and things";
+        var message = new SendBrokerCommand()
+        {
+            Id = id,
+            Command = ArrayOfString(command),
+        };
+        var messageBytes = EncodeBrokerCommand(message);
 
         var request = new WebSocketFrame()
         {
             IsLastFragment = true,
-            OpCode = MessageType.Text,
+            OpCode = MessageType.Binary,
             Mask = FillRandomBytes(4),
             Payload = messageBytes.Length,
         };
@@ -30,15 +35,12 @@ public class WebSocketServerTests : TestUtil
         // the queue when Receive is called
         manager.EnqueueReceive(new Memory<byte>(new byte[0]));
 
-        var command = new EncodedCommand();
-        command.Id = id;
-        command.Command = "stuff and things";
-
         server.OnConnected();
         manager.Step();
 
         Assert.AreEqual(new byte[0], manager.RawOutput());
         Assert.AreEqual(1, broker.Commands.Count);
+        Assert.AreEqual(id, broker.Targets[0]);
         Assert.AreEqual(command, broker.Commands[0]);
         Assert.IsTrue(broker.IsConnected);
     }
@@ -152,7 +154,7 @@ public class WebSocketServerTests : TestUtil
     }
 
     [Test]
-    public void IgnoreBinary()
+    public void IgnoreText()
     {
         var manager = new DummyManager();
         var broker = new DummyServerBroker();
@@ -162,11 +164,11 @@ public class WebSocketServerTests : TestUtil
         var request = new WebSocketFrame()
         {
             IsLastFragment = true,
-            OpCode = MessageType.Binary,
+            OpCode = MessageType.Text,
             Mask = FillRandomBytes(4),
             Payload = 100,
         };
-        var requestBytes = request.ToArray(FillRandomBytes(100));
+        var requestBytes = request.ToArray(FillRandomASCII(100));
         manager.EnqueueReceive(new Memory<byte>(requestBytes));
         // Never actually sent, just a backstop to ensure there is a message in
         // the queue when Receive is called

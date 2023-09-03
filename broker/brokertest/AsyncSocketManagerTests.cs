@@ -3,13 +3,9 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 
-class EchoSocket<SocketT> : IManagedSocket<SocketT>
+class EchoSocket<SocketT> : ManagedSocketBase<SocketT>
 {
     public bool IsClosed;
-
-    public ISocketManager<SocketT> Manager { get; private set; }
-    public SocketT ManagerHandle { private get; set; }
-
     private byte[] ReceiveBuffer = new byte[8192];
 
     public EchoSocket(ISocketManager<SocketT> manager)
@@ -18,22 +14,22 @@ class EchoSocket<SocketT> : IManagedSocket<SocketT>
         IsClosed = false;
     }
 
-    public void OnConnected()
+    override public void OnConnected()
     {
         Manager.Receive(ManagerHandle, new ArraySegment<byte>(ReceiveBuffer));
     }
 
-    public void OnReceive(ArraySegment<byte> destination)
+    override public void OnReceive(ArraySegment<byte> destination)
     {
         Manager.SendAll(ManagerHandle, destination);
     }
 
-    public void OnSend()
+    override public void OnSend()
     {
         Manager.Receive(ManagerHandle, new ArraySegment<byte>(ReceiveBuffer));
     }
 
-    public void OnClose()
+    override public void OnClose()
     {
         IsClosed = true;
     }
@@ -41,12 +37,12 @@ class EchoSocket<SocketT> : IManagedSocket<SocketT>
 
 public class AsyncSocketManagerTests : TestUtil
 {
-    private IManagedSocket<AsyncSocketHandle>? EchoFactory(ISocketManager<AsyncSocketHandle> manager, ConnectedEndPoints endpoints)
+    private ManagedSocketBase<AsyncSocketHandle>? EchoFactory(ISocketManager<AsyncSocketHandle> manager, ConnectedEndPoints endpoints)
     {
         return new EchoSocket<AsyncSocketHandle>(manager);
     }
 
-    private IManagedSocket<AsyncSocketHandle>? RejectFactory(ISocketManager<AsyncSocketHandle> manager, ConnectedEndPoints endpoints)
+    private ManagedSocketBase<AsyncSocketHandle>? RejectFactory(ISocketManager<AsyncSocketHandle> manager, ConnectedEndPoints endpoints)
     {
         return null;
     }

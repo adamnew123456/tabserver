@@ -75,6 +75,20 @@ public abstract class TestUtil
 		var messageSegment = new ArraySegment<byte>(buffer, 0, capacity);
 		connection.SendMessage(messageSegment, message.Length);
 	}
+
+	/// Creates an array segment of the given string, encoding it to ASCII
+	protected ArraySegment<byte> ArrayOfString(string message)
+	{
+		return new ArraySegment<byte>(Encoding.ASCII.GetBytes(message));
+	}
+
+	/// Writes the given broker command to a new array
+	protected byte[] EncodeBrokerCommand(BrokerCommand command)
+	{
+		var buffer = new byte[command.EncodedSize()];
+		command.EncodeTo(new ArraySegment<byte>(buffer));
+		return buffer;
+	}
 }
 
 public enum ManagerEvents
@@ -86,7 +100,7 @@ public enum ManagerEvents
 
 public class DummySocketHandle
 {
-	public IManagedSocket<DummySocketHandle>? Socket;
+	public ManagedSocketBase<DummySocketHandle>? Socket;
 	public Queue<Memory<byte>> ReceiveQueue = new Queue<Memory<byte>>();
 	public ArraySegment<byte>? NextBuffer;
 	public MemoryStream Output = new MemoryStream();
@@ -128,7 +142,7 @@ public class DummyManager : ISocketManager<DummySocketHandle>
 		return Handle.ReceiveQueue.Count > 0;
 	}
 
-	public void DirectBind(IManagedSocket<DummySocketHandle> socket)
+	public void DirectBind(ManagedSocketBase<DummySocketHandle> socket)
 	{
 		socket.ManagerHandle = Handle;
 		Handle.Socket = socket;
@@ -186,7 +200,7 @@ public class DummyManager : ISocketManager<DummySocketHandle>
 		socket.Socket.OnClose();
 	}
 
-    public void ChangeHandler(DummySocketHandle socket, IManagedSocket<DummySocketHandle> newSocket)
+    public void ChangeHandler(DummySocketHandle socket, ManagedSocketBase<DummySocketHandle> newSocket)
     {
 		DirectBind(newSocket);
 		newSocket.OnConnected();
@@ -195,10 +209,11 @@ public class DummyManager : ISocketManager<DummySocketHandle>
 
 public class DummyServerBroker : IBrokerServer
 {
-	public List<EncodedCommand> Commands = new List<EncodedCommand>();
+	public List<string> Commands = new List<string>();
+	public List<int> Targets = new List<int>();
 	public bool IsConnected;
 
-	public void UpstreamConnected()
+	public void UpstreamConnected(IBrokerConnection connection)
 	{
 		IsConnected = true;
 	}
@@ -208,9 +223,10 @@ public class DummyServerBroker : IBrokerServer
 		IsConnected = false;
 	}
 
-	public void ProcessMessage(EncodedCommand command)
+	public void ForwardToClient(int target, ArraySegment<byte> message)
 	{
-		Commands.Add(command);
+		Targets.Add(target);
+		Commands.Add(Encoding.ASCII.GetString(message));
 	}
 }
 
@@ -245,23 +261,19 @@ public class DummyClientBroker : IBrokerClient<DummyClientHandle>
 {
 	public ISet<DummyClientHandle> RegisteredClients = new HashSet<DummyClientHandle>();
 
-    public void ForwardToServer(DummyClientHandle client, string message, bool flush)
+    public void ForwardToServer(DummyClientHandle client, ArraySegment<byte> message)
     {
 		if (client == null)
 		{
 			throw new ArgumentException("Cannot unregister null client");
 		}
 
-		client.Fragments.Add(message);
-		if (flush)
-		{
-			client.Fragments.Add("\n");
-		}
+		client.Fragments.Add(Encoding.ASCII.GetString(message));
     }
 
-    public DummyClientHandle RegisterClient(string name)
+    public DummyClientHandle RegisterClient(IBrokerConnection connection, ArraySegment<byte> name)
     {
-		var handle = new DummyClientHandle(name);
+		var handle = new DummyClientHandle(Encoding.ASCII.GetString(name));
 		RegisteredClients.Add(handle);
 		return handle;
     }

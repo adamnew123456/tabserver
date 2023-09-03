@@ -117,6 +117,78 @@ public class FrameBuilding
     }
 }
 
+public class CommandBuilding
+{
+    [Params(1)]
+    public int Commands { get; set; }
+
+    [Params(0, 100, 1000)]
+    public int DataSize { get; set; }
+
+    private SendBrokerCommand Command;
+    private byte[] Buffer;
+    private byte[] Data;
+
+    [GlobalSetup]
+    public void BuildMessageBuffer()
+    {
+        var data = new byte[DataSize];
+        Random.Shared.NextBytes(data);
+
+        Command = new SendBrokerCommand()
+        {
+            Id = 1,
+            Command = new ArraySegment<byte>(data),
+        };
+        Buffer = new byte[Command.EncodedSize()];
+    }
+
+    [Benchmark]
+    public void BuildCommands()
+    {
+        for (var i = 0; i < Commands; i++)
+        {
+            Command.EncodeTo(new ArraySegment<byte>(Buffer));
+        }
+    }
+}
+
+public class CommandParsing
+{
+    [Params(1)]
+    public int Commands { get; set; }
+
+    [Params(0, 100, 1000)]
+    public int DataSize { get; set; }
+
+    private byte[] Buffer;
+
+    [GlobalSetup]
+    public void BuildCommandBuffer()
+    {
+        var data = new byte[DataSize];
+        Random.Shared.NextBytes(data);
+
+        var command = new SendBrokerCommand()
+        {
+            Id = 1,
+            Command = data,
+        };
+
+        Buffer = new byte[command.EncodedSize()];
+        command.EncodeTo(Buffer);
+    }
+
+    [Benchmark]
+    public void ParseFrames()
+    {
+        for (var i = 0; i < Commands; i++)
+        {
+            var command = BrokerCommand.Decode(new Span<byte>(Buffer));
+        }
+    }
+}
+
 public class Program
 {
     public static void Main(string[] args)

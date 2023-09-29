@@ -1,0 +1,108 @@
+body {
+    display: flex;
+    flex-direction: row;
+    width: 98vw;
+    height: 98vh;
+    background: #fdf6e3;
+    border-collapse: collapse;
+}
+
+.hidden {
+    display: none !important;
+}
+
+#client-list {
+    flex: 1 0 25%;
+    border: 1px solid black;
+    overflow: auto;
+}
+
+/* Client entries. A list of clients that we have notebooks for, until the user
+   deletes it. They may be live (can execute queries) or dead. */
+.client-entry.dead {
+    color: #dc322f;
+}
+
+.client-entry.dead::after {
+    content: " (dead)";
+}
+
+.client-entry.selected {
+    background: #fdf6e3;
+}
+
+.client-entry {
+    border: 1px solid black;
+    margin: 2px;
+    padding: 2px;
+    width: calc(100% - 10px);
+    min-height: 2lh;
+    color: #657b83;
+    background: #eee8d5;
+}
+
+/* Notebook contains the query input and a history of saved queries and their
+   results. */
+#notebook {
+    display: flex;
+    flex: 0 0 75%;
+    flex-direction: column;
+    border: 1px solid black;
+}
+
+#notebook-history {
+    flex: 1 0 0;
+    overflow: auto;
+}
+
+#notebook-controls {
+    flex: 0 0 min-content;
+    display: flex;
+    flex-direction: row;
+}
+
+#notebook-status {
+    flex: 0 0 min-content;
+}
+
+#notebook-controls.hidden {
+    display: none;
+}
+
+#notebook-controls button, #notebook-controls input {
+    flex: 0 0 min-content;
+    background: #eee8d5;
+}
+
+#notebook-controls textarea {
+    flex: 1 0 min-content;
+}
+
+.notebook-box {
+    width: calc(100% - 22px);
+    padding: 5px;
+    margin: 5px;
+    border: 1px solid black;
+    background: #eee8d5;
+}
+
+.query {
+}
+
+.result {
+    color: #657b83;
+    background: #fdf6e3;
+}
+
+.error {
+    color: #dc322f;
+}
+
+.result th {
+    color: #268bd2;
+}
+
+.result th, .result td, .result table {
+    border: 1px solid #586e75;
+    border-collapse: collapse;
+}

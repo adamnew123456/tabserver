@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="style.css" type="text/css">
+    <link rel="stylesheet" href="https://unpkg.com/@highlightjs/cdn-assets@11.8.0/styles/default.min.css" type="text/css">
+    <script type="importmap">
+    {
+      "imports": {
+        "highlight": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/es/highlight.min.js",
+        "highlight-sql": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/es/languages/sql.min.js",
+        "./broker": "/broker.js",
+        "./tabserver": "/tabserver.js"
+      }
+    }
+    </script>
+    <script type="module">
+    import hljs from 'highlight';
+    import sql from 'highlight-sql';
+    hljs.registerLanguage('sql', sql);
+    </script>
+    <title>TabServer</title>
+  </head>
+  <body>
+    <div id="client-list">
+    </div>
+    <div id="notebook">
+      <div id="notebook-history"></div>
+      <div id="notebook-controls">
+        <button id="execute-query">Execute</button>
+        <button id="prepare-query">Prepare</button>
+        <input id="max-rows" type="number" min="1" value="1000">
+        <textarea id="query" rows="5"></textarea>
+      </div>
+      <div id="notebook-status">OK</div>
+    </div>
+  </body>
+  <script type="module" src="app.js"></script>
+</html>

@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "module": "ES6",
+    "noImplicitAny": true,
+    "lib": [
+      "es6",
+      "dom"
+    ],
+    "typeRoots": [ "./@types" ]
+  },
+  "files": [
+    "broker.ts",
+    "tabserver.ts",
+    "app.ts"
+  ]
+}

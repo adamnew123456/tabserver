@@ -52,30 +52,6 @@ public abstract class TestUtil
 		connection.SendMessage(messageSegment, message.Length);
 	}
 
-	/// Sends a text message (UTF-8 encoded) to the given broker connection.
-	protected void SendMessageAsBroker(IBrokerConnection connection, string message)
-	{
-		var encoder = Encoding.UTF8.GetEncoder();
-		var messageLength = encoder.GetByteCount(message, true);
-
-		var capacity = connection.MessageCapacity(messageLength);
-		var buffer = ArrayPool<byte>.Shared.Rent(capacity);
-		var messageDest = new Span<byte>(buffer, capacity - message.Length, message.Length);
-
-		var charsRead = 0;
-		var bytesWritten = 0;
-		var completed = false;
-		encoder.Convert(message,
-						messageDest,
-						true,
-						out charsRead,
-						out bytesWritten,
-						out completed);
-
-		var messageSegment = new ArraySegment<byte>(buffer, 0, capacity);
-		connection.SendMessage(messageSegment, message.Length);
-	}
-
 	/// Creates an array segment of the given string, encoding it to ASCII
 	protected ArraySegment<byte> ArrayOfString(string message)
 	{

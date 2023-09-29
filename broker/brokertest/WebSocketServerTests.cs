@@ -57,17 +57,22 @@ public class WebSocketServerTests : TestUtil
         // the queue when Receive is called
         manager.EnqueueReceive(new Memory<byte>(new byte[0]));
 
-        var id = Guid.NewGuid().ToString();
-        var message = "{\"id\": \"" + id + "\", \"hello\": \"hi world\"}";
-        var messageBytes = Encoding.UTF8.GetBytes(message);
+        var id = 1;
+        var command = "stuff and things";
+        var message = new SendBrokerCommand()
+        {
+            Id = id,
+            Command = ArrayOfString(command),
+        };
+        var messageBytes = EncodeBrokerCommand(message);
 
         server.OnConnected();
-        SendMessageAsBroker(server, message);
+        SendBytesAsBroker(server, messageBytes);
 
         var request = new WebSocketFrame()
         {
             IsLastFragment = true,
-            OpCode = MessageType.Text,
+            OpCode = MessageType.Binary,
             Mask = null,
             Payload = messageBytes.Length,
         };

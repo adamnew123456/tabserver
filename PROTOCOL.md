@@ -421,6 +421,12 @@ that a new client has connected. Note that this restricts the maximum length of
 the HELLO message to 65535 bytes - if the client tries to send a longer one, the 
 broker must immediately disconnect it.
 
+The ID assigned by HELLO is not recycled between dead and live clients - if a
+client disconnects, its ID is not reused for the duration of the broker's
+lifetime.
+
+The name is a base64-encoded UTF-8 string.
+
 ```
 | op (1) | id (4)        | name-length (2) | name (var) |
 | 0      | <32-bit int>  | <16-bit uint>   | <ASCII>    |

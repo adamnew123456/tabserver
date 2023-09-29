@@ -163,12 +163,15 @@ public class TabServer<BrokerHandleT, SocketHandleT> : ManagedSocketBase<SocketH
 
 	public void SendMessage(ArraySegment<byte> buffer, int messageBytes)
 	{
-        PendingSend.Enqueue(buffer);
-        if (PendingSend.Count == 1)
+        lock (PendingSend)
         {
-            // OnSend will continue pumping the queue as long as it is not empty, but we need to
-            // prime it if it was.
-            OnSend();
+            PendingSend.Enqueue(buffer);
+            if (PendingSend.Count == 1)
+            {
+                // OnSend will continue pumping the queue as long as it is not empty, but we need to
+                // prime it if it was.
+                SendPendingMessage();
+            }
         }
 	}
 

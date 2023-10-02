@@ -34,17 +34,18 @@ class HistoryEntry {
      * Generates HTML elements displaying this entry and adds them to the given node. */
     render(): {query: HTMLElement; result: HTMLElement} {
         let queryNode = this.buildSQLNode(this.query);
+        hljs.highlightElement(queryNode.firstChild as HTMLElement);
 
         let resultNode: HTMLElement;
         if (this.affected != null) {
             resultNode = this.buildSQLNode(`-- Affected: ${this.affected}`);
+            hljs.highlightElement(resultNode.firstChild as HTMLElement);
         } else if (this.cells != null) {
             resultNode = this.buildTable(this.cells);
         } else {
             resultNode = this.buildErrorNode(this.error);
         }
 
-        hljs.highlightElement(queryNode);
         return { query: queryNode, result: resultNode };
     }
 
@@ -53,8 +54,9 @@ class HistoryEntry {
         let preElement = document.createElement('pre');
         let codeElement = document.createElement('code');
 
-        queryElement.classList.add('notebook-box', 'query', 'language-sql');
-        codeElement.innerText = query;
+        queryElement.classList.add('notebook-box', 'query');
+        codeElement.classList.add('language-sql');
+        codeElement.textContent = query;
         preElement.appendChild(codeElement);
         queryElement.appendChild(preElement);
         return queryElement;
@@ -65,7 +67,7 @@ class HistoryEntry {
         let textElement = document.createElement('pre');
 
         errorElement.classList.add('notebook-box', 'error');
-        textElement.innerText = error;
+        textElement.textContent = error;
         errorElement.appendChild(textElement);
         return errorElement;
     }
@@ -87,7 +89,7 @@ class HistoryEntry {
                 } else {
                     tableCell = document.createElement('td');
                 }
-                tableCell.innerText = cellRow[col];
+                tableCell.textContent = cellRow[col];
                 tableRow.appendChild(tableCell);
             }
 

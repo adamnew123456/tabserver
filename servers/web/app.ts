@@ -393,12 +393,17 @@ class ClientManager implements broker.BrokerEvents {
 
     private disconnectClient(id: number) {
         let client = this.clients.get(id);
-        if (this.currentClient == id) {
+        let refreshUI = this.currentClient == id;
+        if (refreshUI) {
             this.ui.switchFromClient(client);
-            this.ui.switchToClient(client);
         }
 
         client.disconnect();
+
+        if (refreshUI) {
+            this.ui.switchToClient(client);
+        }
+
         this.ui.disableClient(id);
     }
 }

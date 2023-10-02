@@ -48,6 +48,7 @@ body {
     flex: 0 0 75%;
     flex-direction: column;
     border: 1px solid black;
+    max-width: 75%;
 }
 
 #notebook-history {

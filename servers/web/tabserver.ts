@@ -156,14 +156,11 @@ export class TabServerConnection {
         lineEnding = content.indexOf('\n', lineStart);
         while (lineEnding != -1) {
             this.processLine(content.substring(lineStart, lineEnding));
-
             lineStart = lineEnding + 1;
             lineEnding = content.indexOf('\n', lineStart);
         }
 
-        if (lineStart < content.length) {
-            this.buffer = content.substring(lineStart);
-        }
+        this.buffer = content.substring(lineStart);
     }
 
     private processLine(line: string): void {
@@ -178,7 +175,7 @@ export class TabServerConnection {
                 } else if (line == 'METADATA') {
                     this.state = TabServerParserStates.AwaitMetadataCount;
                 } else if (line == 'AFFECTED') {
-                    this.state = TabServerParserStates.AwaitMetadataCount;
+                    this.state = TabServerParserStates.AwaitAffectedCount;
                 } else {
                     throw new Error(`In state ${this.state}: Unexpected ${line}`);
                 }

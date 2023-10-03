@@ -578,9 +578,11 @@ class ClientManagerHandle implements ClientUIHandle {
 }
 
 function init() {
-    let uri = prompt("Enter URL of broker", "ws://localhost:1234");
+    let defaultServer = localStorage.getItem("server") ?? "ws://localhost:1234";
+    let uri = prompt("Enter URL of broker", defaultServer);
     try {
         new ClientManager(uri);
+        localStorage.setItem("server", uri);
     } catch (err) {
         alert(`Could not open connection: ${err}`)
     }

@@ -352,7 +352,7 @@ public class BrokerEventDispatcher
                 if (evt is StopBroker)
                 {
                     CloseAll();
-                    break;
+                    return;
                 }
                 else if (evt is UpstreamConnected upstreamConnected)
                 {

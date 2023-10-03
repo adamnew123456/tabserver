@@ -339,47 +339,53 @@ public class BrokerEventDispatcher
         Manager.Bind(upstreamEndpoint, OnUpstreamConnected);
         Manager.Bind(clientEndpoint, OnClientConnected);
 
-        BrokerEvent? evt = null;
         while (true)
         {
             EventWaiter.WaitOne();
-            if (!Events.TryDequeue(out evt)) continue;
-
-            if (evt is StopBroker)
+            
+            // Only use the EventWaiter for wake-up, do *not* assume that the waiter will get set
+            // for every event that comes in. If two events come in concurrently, there will only be one 
+            // wakeup from the waiter.
+            BrokerEvent? evt = null;
+            while (Events.TryDequeue(out evt))
             {
-                CloseAll();
-                break;
-            }
-            else if (evt is UpstreamConnected upstreamConnected)
-            {
-                State = UpstreamState.Connected;
-                UpstreamBroker = upstreamConnected.Handle;
-            }
-            else if (evt is UpstreamDisconnected)
-            {
-                State = UpstreamState.NoConnection;
-                UpstreamSocket = null;
-                foreach (var client in Clients.Values)
+                if (evt is StopBroker)
                 {
-                    client.Close();
+                    CloseAll();
+                    break;
                 }
-                Clients.Clear();
-            }
-            else if (evt is ClientConnected connected)
-            {
-                OnClientConnected(connected);
-            }
-            else if (evt is ClientDisconnected disconnected)
-            {
-                OnClientDisconnected(disconnected);
-            }
-            else if (evt is ForwardToClient toClient)
-            {
-                SendToClient(toClient);
-            }
-            else if (evt is ForwardToUpstream toUpstream)
-            {
-                SendToUpstream(toUpstream);
+                else if (evt is UpstreamConnected upstreamConnected)
+                {
+                    State = UpstreamState.Connected;
+                    UpstreamBroker = upstreamConnected.Handle;
+                }
+                else if (evt is UpstreamDisconnected)
+                {
+                    State = UpstreamState.NoConnection;
+                    UpstreamSocket = null;
+                    foreach (var client in Clients.Values)
+                    {
+                        client.Close();
+                    }
+
+                    Clients.Clear();
+                }
+                else if (evt is ClientConnected connected)
+                {
+                    OnClientConnected(connected);
+                }
+                else if (evt is ClientDisconnected disconnected)
+                {
+                    OnClientDisconnected(disconnected);
+                }
+                else if (evt is ForwardToClient toClient)
+                {
+                    SendToClient(toClient);
+                }
+                else if (evt is ForwardToUpstream toUpstream)
+                {
+                    SendToUpstream(toUpstream);
+                }
             }
         }
     }

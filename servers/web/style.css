@@ -87,7 +87,26 @@ body {
     background: #eee8d5;
 }
 
+/* Needed so that the copy button's position: absolute has something to anchor
+   to. Doesn't actually change where the query box itself goes. */
 .query {
+    position: relative;
+}
+
+.query-copy {
+    display: none;
+    z-index: 1;
+    position: absolute;
+    right: 0;
+    top: 0;
+
+    background: transparent;
+    border: 1px solid #93a1a1;
+    color: #268bd2;
+}
+
+.query:hover .query-copy {
+    display: inline;
 }
 
 .result {

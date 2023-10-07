@@ -53,12 +53,16 @@ class HistoryEntry {
         let queryElement = document.createElement('div');
         let preElement = document.createElement('pre');
         let codeElement = document.createElement('code');
+        let copyElement = document.createElement('button');
 
         queryElement.classList.add('notebook-box', 'query');
         codeElement.classList.add('language-sql');
+        copyElement.classList.add('query-copy');
         codeElement.textContent = query;
+        copyElement.textContent = 'Copy';
         preElement.appendChild(codeElement);
         queryElement.appendChild(preElement);
+        queryElement.appendChild(copyElement);
         return queryElement;
     }
 
@@ -451,7 +455,8 @@ class UIManager {
 
     addToHistory(entry: HistoryEntry) {
         let newNodes = entry.render();
-        newNodes.query.addEventListener('click', () => this.onQueryClicked(entry.query));
+        let copyButton = newNodes.query.querySelector('.query-copy');
+        copyButton.addEventListener('click', () => this.onQueryClicked(entry.query));
 
         this.notebookHistory.appendChild(newNodes.query);
         this.notebookHistory.appendChild(newNodes.result);

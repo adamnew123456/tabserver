@@ -13,7 +13,7 @@ body {
 
 #client-list {
     flex: 1 0 25%;
-    border: 1px solid black;
+    border: 1px solid #93a1a1;
     overflow: auto;
 }
 
@@ -32,7 +32,7 @@ body {
 }
 
 .client-entry {
-    border: 1px solid black;
+    border: 1px solid #93a1a1;
     margin: 2px;
     padding: 2px;
     width: calc(100% - 10px);
@@ -47,7 +47,7 @@ body {
     display: flex;
     flex: 0 0 75%;
     flex-direction: column;
-    border: 1px solid black;
+    border: 1px solid #93a1a1;
     max-width: 75%;
 }
 
@@ -83,7 +83,7 @@ body {
     width: calc(100% - 22px);
     padding: 5px;
     margin: 5px;
-    border: 1px solid black;
+    border: 1px solid #93a1a1;
     background: #eee8d5;
 }
 

@@ -75,8 +75,22 @@ body {
     background: #eee8d5;
 }
 
-#notebook-controls textarea {
+#input-query-wrapper {
     flex: 1 0 min-content;
+    min-height: 4lh;
+    position: relative;
+}
+
+#input-query {
+    width: 100%;
+}
+
+#input-query:focus {
+    z-index: 1;
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 50vh;
 }
 
 .notebook-box {

@@ -431,7 +431,7 @@ class UIManager {
         this.notebookHistory = this.elem('notebook-history');
         this.notebookControls = this.elem('notebook-controls');
         this.notebookStatus = this.elem('notebook-status');
-        this.query = this.elem('query') as HTMLTextAreaElement;
+        this.query = this.elem('input-query') as HTMLTextAreaElement;
         this.maxRows = this.elem('max-rows') as HTMLInputElement;
         this.clientEntries = new Map<number, HTMLElement>();
 

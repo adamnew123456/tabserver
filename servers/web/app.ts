@@ -56,7 +56,7 @@ class HistoryEntry {
         let copyElement = document.createElement('button');
 
         queryElement.classList.add('notebook-box', 'query');
-        codeElement.classList.add('language-sql');
+        preElement.classList.add('language-sql');
         copyElement.classList.add('query-copy');
         codeElement.textContent = query;
         copyElement.textContent = 'Copy';

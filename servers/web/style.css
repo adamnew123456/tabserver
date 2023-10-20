@@ -101,6 +101,12 @@ body {
     background: #eee8d5;
 }
 
+/* Query results can overflow, also they have a table so they don't need the
+   outer border. */
+.notebook-box.result {
+    border: none;
+}
+
 /* Needed so that the copy button's position: absolute has something to anchor
    to. Doesn't actually change where the query box itself goes. */
 .query {

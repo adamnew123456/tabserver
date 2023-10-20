@@ -441,9 +441,15 @@ class UIManager {
 
     addClient(id: number, label: string) {
         let clientEntry = document.createElement('div');
-        clientEntry.innerText = label;
+        let clientNameEdit = document.createElement('button');
+        clientNameEdit.textContent = 'Edit Name';
+        clientNameEdit.classList.add('client-name-edit');
+        clientNameEdit.addEventListener('click', () => this.onClientNameEdit(id));
+
+        clientEntry.textContent = label;
         clientEntry.classList.add('client-entry');
         clientEntry.addEventListener('click', () => this.onClientClicked(id));
+        clientEntry.appendChild(clientNameEdit);
         this.clientList.appendChild(clientEntry);
         this.clientEntries.set(id, clientEntry);
     }
@@ -505,6 +511,14 @@ class UIManager {
 
     private onClientClicked(id: number) {
         this.owner.switchToClient(id);
+    }
+
+    private onClientNameEdit(id: number) {
+        let clientEntry = (this.clientEntries.get(id).firstChild as Text);
+        let name = prompt('Enter a new name for the connection', clientEntry.data);
+        if (name != null) {
+            clientEntry.data = name;
+        }
     }
 
     private elem(id: string): HTMLElement {

@@ -494,10 +494,13 @@ public class BrokerServerEvents : IBrokerServer
 
     public void ForwardToClient(int client, ArraySegment<byte> message)
     {
+        byte[] tempArray = new byte[message.Count];
+        message.CopyTo(tempArray);
+
         Dispatcher.PostEvent(new ForwardToClient()
         {
             DestinationClient = client,
-            Message = message,
+            Message = new ArraySegment<byte>(tempArray),
         });
     }
 }
@@ -532,10 +535,13 @@ public class BrokerClientEvents : IBrokerClient<BrokerHandle>
 
     public void ForwardToServer(BrokerHandle client, ArraySegment<byte> message)
     {
+        byte[] tempArray = new byte[message.Count];
+        message.CopyTo(tempArray);
+
         Dispatcher.PostEvent(new ForwardToUpstream()
         {
             SourceClient = client,
-            Message = message,
+            Message = new ArraySegment<byte>(tempArray),
         });
     }
 }

@@ -393,7 +393,7 @@ public class WebSocketServer<SocketHandleT> : ManagedSocketBase<SocketHandleT>, 
 		{
 			if (PendingSend.Count > 0)
 			{
-				var message = PendingSend.Dequeue();
+				var message = PendingSend.Peek();
 				SendingClose = message.OpCode == MessageType.Close;
 
 				MessageFrame.IsLastFragment = true;

@@ -100,6 +100,12 @@ public class TabServer<BrokerHandleT, SocketHandleT> : ManagedSocketBase<SocketH
                 if (buffer[i] == '\n')
                 {
                     var client = buffer.Slice(lineStart, i - lineStart);
+                    if (client.Count > UInt16.MaxValue)
+                    {
+                        // Abort - the HELLO message is too long to fit into an upstream HELLO frame.
+                        Manager.Close(ManagerHandle);
+                        return;
+                    }
                     BrokerHandle = Broker.RegisterClient(this, client);
                     lineStart = i + 1;
                     State = HelloState.Forward;
@@ -123,6 +129,11 @@ public class TabServer<BrokerHandleT, SocketHandleT> : ManagedSocketBase<SocketH
         if (State == HelloState.Forward && lineStart < buffer.Count)
         {
             var message = buffer.Slice(lineStart, buffer.Count - lineStart);
+            while (message.Count > UInt16.MaxValue)
+            {
+                Broker.ForwardToServer(BrokerHandle, message.Slice(0, UInt16.MaxValue));
+                message = message.Slice(UInt16.MaxValue);
+            }
             Broker.ForwardToServer(BrokerHandle, message);
             ReceiveBuffer.SaveUnread(buffer.Count);
         }
